@@ -12,6 +12,7 @@ $script:HaySpaceScriptPath = $PSCommandPath
 foreach ($module in @('Storage.psm1', 'Workspace.psm1', 'Shortcuts.psm1', 'Startup.psm1')) {
     Import-Module (Join-Path (Join-Path $root 'Modules') $module) -Force
 }
+$script:HaySpaceDpiContext = [HaySpace.NativeWindow]::EnterPhysicalCoordinates()
 $paths = Initialize-HaySpaceStorage
 
 if ($LoadProfile) {
@@ -1586,4 +1587,5 @@ finally {
     Write-HaySpaceLog -Message 'HaySpace dispatcher stopped.'
     $script:HaySpaceInstanceMutex.ReleaseMutex()
     $script:HaySpaceInstanceMutex.Dispose()
+    [HaySpace.NativeWindow]::RestoreDpiAwarenessContext($script:HaySpaceDpiContext)
 }

@@ -12,7 +12,7 @@ Arrange application windows as desired, then select **Capture workspace**. Choos
 - **Workspace Layout** and **Full Workspace** save application launch paths as well as window placements.
 - Add web addresses in the profile editor, one per line. Only HTTP and HTTPS addresses should be used.
 
-Capture includes visible and minimized windows with usable restored dimensions, and preserves minimized state. Explorer folder paths are captured when Windows exposes them. Some elevated, protected, or transient windows may not be capturable.
+Capture includes visible and minimized windows with usable restored dimensions, and preserves minimized state. Window bounds use physical pixels across DPI-scaled displays and retain the small frame offsets used by snapped windows. Explorer folder paths are captured when Windows exposes them. Some elevated, protected, or transient windows may not be capturable.
 
 When a browser window is included, HaySpace attempts to read its active address bar through Windows UI Automation and save an HTTP(S) URL. This is best-effort and varies by browser and window state.
 

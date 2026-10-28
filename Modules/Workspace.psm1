@@ -56,73 +56,97 @@ namespace HaySpace {
         [DllImport("user32.dll")] private static extern bool IsZoomed(IntPtr hWnd);
         [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int command);
         [DllImport("user32.dll", SetLastError=true)] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
+        [DllImport("user32.dll", SetLastError=true)] private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr dpiContext);
         [DllImport("user32.dll", SetLastError=true)] public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint virtualKey);
         [DllImport("user32.dll", SetLastError=true)] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
         private const uint SWP_NOZORDER = 0x0004;
         private const uint SWP_NOACTIVATE = 0x0010;
+        private static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = new IntPtr(-4);
+
+        public static IntPtr EnterPhysicalCoordinates() {
+            try {
+                return SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+            } catch (EntryPointNotFoundException) {
+                return IntPtr.Zero;
+            }
+        }
+
+        public static void RestoreDpiAwarenessContext(IntPtr previousContext) {
+            if (previousContext != IntPtr.Zero) SetThreadDpiAwarenessContext(previousContext);
+        }
 
         public static WindowInfo[] GetWindows() {
-            var result = new System.Collections.Generic.List<WindowInfo>();
-            EnumWindows(delegate(IntPtr hWnd, IntPtr ignored) {
-                if (!IsWindowVisible(hWnd)) return true;
-                var text = new StringBuilder(1024);
-                GetWindowText(hWnd, text, text.Capacity);
-                if (text.Length == 0) return true;
-                int pid;
-                GetWindowThreadProcessId(hWnd, out pid);
-                try {
-                    var process = Process.GetProcessById(pid);
-                    RECT rect;
-                    bool minimized = IsIconic(hWnd);
-                    if (minimized) {
-                        WINDOWPLACEMENT placement = new WINDOWPLACEMENT();
-                        placement.Length = (uint)Marshal.SizeOf(typeof(WINDOWPLACEMENT));
-                        if (GetWindowPlacement(hWnd, ref placement)) {
-                            rect = placement.NormalPosition;
-                            IntPtr monitor = MonitorFromWindow(hWnd, 2);
-                            if (monitor != IntPtr.Zero) {
-                                MONITORINFO info = new MONITORINFO();
-                                info.Size = (uint)Marshal.SizeOf(typeof(MONITORINFO));
-                                if (GetMonitorInfo(monitor, ref info)) {
-                                    int offsetX = info.Monitor.Left - info.Work.Left;
-                                    int offsetY = info.Monitor.Top - info.Work.Top;
-                                    rect.Left += offsetX;
-                                    rect.Right += offsetX;
-                                    rect.Top += offsetY;
-                                    rect.Bottom += offsetY;
+            IntPtr previousContext = EnterPhysicalCoordinates();
+            try {
+                var result = new System.Collections.Generic.List<WindowInfo>();
+                EnumWindows(delegate(IntPtr hWnd, IntPtr ignored) {
+                    if (!IsWindowVisible(hWnd)) return true;
+                    var text = new StringBuilder(1024);
+                    GetWindowText(hWnd, text, text.Capacity);
+                    if (text.Length == 0) return true;
+                    int pid;
+                    GetWindowThreadProcessId(hWnd, out pid);
+                    try {
+                        var process = Process.GetProcessById(pid);
+                        RECT rect;
+                        bool minimized = IsIconic(hWnd);
+                        if (minimized) {
+                            WINDOWPLACEMENT placement = new WINDOWPLACEMENT();
+                            placement.Length = (uint)Marshal.SizeOf(typeof(WINDOWPLACEMENT));
+                            if (GetWindowPlacement(hWnd, ref placement)) {
+                                rect = placement.NormalPosition;
+                                IntPtr monitor = MonitorFromWindow(hWnd, 2);
+                                if (monitor != IntPtr.Zero) {
+                                    MONITORINFO info = new MONITORINFO();
+                                    info.Size = (uint)Marshal.SizeOf(typeof(MONITORINFO));
+                                    if (GetMonitorInfo(monitor, ref info)) {
+                                        int offsetX = info.Monitor.Left - info.Work.Left;
+                                        int offsetY = info.Monitor.Top - info.Work.Top;
+                                        rect.Left += offsetX;
+                                        rect.Right += offsetX;
+                                        rect.Top += offsetY;
+                                        rect.Bottom += offsetY;
+                                    }
                                 }
+                            } else if (!GetWindowRect(hWnd, out rect)) {
+                                return true;
                             }
                         } else if (!GetWindowRect(hWnd, out rect)) {
                             return true;
                         }
-                    } else if (!GetWindowRect(hWnd, out rect)) {
-                        return true;
-                    }
-                    result.Add(new WindowInfo {
-                        Handle = hWnd,
-                        Title = text.ToString(),
-                        ProcessId = pid,
-                        ProcessName = process.ProcessName,
-                        ProcessPath = process.MainModule.FileName,
-                        X = rect.Left,
-                        Y = rect.Top,
-                        Width = Math.Max(0, rect.Right - rect.Left),
-                        Height = Math.Max(0, rect.Bottom - rect.Top),
-                        Maximized = IsZoomed(hWnd),
-                        Minimized = minimized
-                    });
-                } catch { }
-                return true;
-            }, IntPtr.Zero);
-            return result.ToArray();
+                        result.Add(new WindowInfo {
+                            Handle = hWnd,
+                            Title = text.ToString(),
+                            ProcessId = pid,
+                            ProcessName = process.ProcessName,
+                            ProcessPath = process.MainModule.FileName,
+                            X = rect.Left,
+                            Y = rect.Top,
+                            Width = Math.Max(0, rect.Right - rect.Left),
+                            Height = Math.Max(0, rect.Bottom - rect.Top),
+                            Maximized = IsZoomed(hWnd),
+                            Minimized = minimized
+                        });
+                    } catch { }
+                    return true;
+                }, IntPtr.Zero);
+                return result.ToArray();
+            } finally {
+                RestoreDpiAwarenessContext(previousContext);
+            }
         }
 
         public static bool Move(IntPtr handle, int x, int y, int width, int height, int state) {
-            ShowWindow(handle, 9);
-            if (!SetWindowPos(handle, IntPtr.Zero, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE)) return false;
-            if (state == 1) ShowWindow(handle, 3);
-            else if (state == 2) ShowWindow(handle, 2);
-            return true;
+            IntPtr previousContext = EnterPhysicalCoordinates();
+            try {
+                ShowWindow(handle, 9);
+                if (!SetWindowPos(handle, IntPtr.Zero, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE)) return false;
+                if (state == 1) ShowWindow(handle, 3);
+                else if (state == 2) ShowWindow(handle, 2);
+                return true;
+            } finally {
+                RestoreDpiAwarenessContext(previousContext);
+            }
         }
     }
 }
@@ -132,28 +156,34 @@ namespace HaySpace {
 function Get-HaySpaceDisplays {
     Add-Type -AssemblyName System.Windows.Forms
     $settings = Get-HaySpaceSettings
-    $screens = [System.Windows.Forms.Screen]::AllScreens
-    $result = @()
-    foreach ($screen in $screens) {
-        $friendlyName = $screen.DeviceName
-        if ($settings.DisplayNames -and $settings.DisplayNames.ContainsKey($screen.DeviceName)) {
-            $friendlyName = [string]$settings.DisplayNames[$screen.DeviceName]
+    $previousDpiContext = [HaySpace.NativeWindow]::EnterPhysicalCoordinates()
+    try {
+        $screens = [System.Windows.Forms.Screen]::AllScreens
+        $result = @()
+        foreach ($screen in $screens) {
+            $friendlyName = $screen.DeviceName
+            if ($settings.DisplayNames -and $settings.DisplayNames.ContainsKey($screen.DeviceName)) {
+                $friendlyName = [string]$settings.DisplayNames[$screen.DeviceName]
+            }
+            $result += [pscustomobject]@{
+                DeviceName = $screen.DeviceName
+                DisplayName = $friendlyName
+                Primary = $screen.Primary
+                X = $screen.Bounds.X
+                Y = $screen.Bounds.Y
+                Width = $screen.Bounds.Width
+                Height = $screen.Bounds.Height
+                WorkX = $screen.WorkingArea.X
+                WorkY = $screen.WorkingArea.Y
+                WorkWidth = $screen.WorkingArea.Width
+                WorkHeight = $screen.WorkingArea.Height
+            }
         }
-        $result += [pscustomobject]@{
-            DeviceName = $screen.DeviceName
-            DisplayName = $friendlyName
-            Primary = $screen.Primary
-            X = $screen.Bounds.X
-            Y = $screen.Bounds.Y
-            Width = $screen.Bounds.Width
-            Height = $screen.Bounds.Height
-            WorkX = $screen.WorkingArea.X
-            WorkY = $screen.WorkingArea.Y
-            WorkWidth = $screen.WorkingArea.Width
-            WorkHeight = $screen.WorkingArea.Height
-        }
+        return $result
     }
-    return $result
+    finally {
+        [HaySpace.NativeWindow]::RestoreDpiAwarenessContext($previousDpiContext)
+    }
 }
 
 function Get-HaySpaceDisplayConfigurationKey {
@@ -524,12 +554,13 @@ function Restore-HaySpaceWorkspace {
             $relativeY = if ($target.PSObject.Properties['RelativeY'] -and $null -ne $target.RelativeY) { [double]$target.RelativeY } else { ([double]$target.Y - $display.WorkY) / $workHeight }
             $relativeWidth = if ($target.PSObject.Properties['RelativeWidth'] -and $null -ne $target.RelativeWidth) { [double]$target.RelativeWidth } else { [double]$target.Width / $workWidth }
             $relativeHeight = if ($target.PSObject.Properties['RelativeHeight'] -and $null -ne $target.RelativeHeight) { [double]$target.RelativeHeight } else { [double]$target.Height / $workHeight }
-            $width = [math]::Min($workWidth, [math]::Max(240, [int]($relativeWidth * $workWidth)))
-            $height = [math]::Min($workHeight, [math]::Max(160, [int]($relativeHeight * $workHeight)))
-            $x = [int]($display.WorkX + ($relativeX * $workWidth))
-            $y = [int]($display.WorkY + ($relativeY * $workHeight))
-            $x = [math]::Max($display.WorkX, [math]::Min($x, $display.WorkX + $workWidth - $width))
-            $y = [math]::Max($display.WorkY, [math]::Min($y, $display.WorkY + $workHeight - $height))
+            $frameAllowance = 32
+            $width = [math]::Min($workWidth + ($frameAllowance * 2), [math]::Max(240, [int][math]::Round($relativeWidth * $workWidth)))
+            $height = [math]::Min($workHeight + ($frameAllowance * 2), [math]::Max(160, [int][math]::Round($relativeHeight * $workHeight)))
+            $x = [int][math]::Round($display.WorkX + ($relativeX * $workWidth))
+            $y = [int][math]::Round($display.WorkY + ($relativeY * $workHeight))
+            $x = [math]::Max($display.WorkX - $frameAllowance, [math]::Min($x, $display.WorkX + $workWidth - $width + $frameAllowance))
+            $y = [math]::Max($display.WorkY - $frameAllowance, [math]::Min($y, $display.WorkY + $workHeight - $height + $frameAllowance))
             $state = switch ([string]$target.State) { 'Maximized' { 1 } 'Minimized' { 2 } default { 0 } }
             if ([HaySpace.NativeWindow]::Move($candidate.Handle, $x, $y, $width, $height, $state)) {
                 $placedTargets[$targetKey] = $true
