@@ -458,9 +458,23 @@ function Restore-HaySpaceWorkspace {
             if ($app.PSObject.Properties['Launch'] -and -not $app.Launch) { continue }
             $processName = if ($app.PSObject.Properties['ProcessName']) { [string]$app.ProcessName } else { '' }
             $processPath = if ($app.PSObject.Properties['ProcessPath']) { [string]$app.ProcessPath } else { '' }
+            $appUserModelId = if ($app.PSObject.Properties['AppUserModelId']) { [string]$app.AppUserModelId } else { '' }
             $alreadyRunning = if ($processName) { Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($processName)) -ErrorAction SilentlyContinue | Select-Object -First 1 } else { $null }
             $isSessionBrowser = $browserMode -eq 'Session' -and $processName -in @('msedge', 'chrome', 'firefox')
-            if ((-not $alreadyRunning -or $isSessionBrowser) -and $processPath -and (Test-Path -LiteralPath $processPath)) {
+            if ((-not $alreadyRunning -or $isSessionBrowser) -and $appUserModelId) {
+                try {
+                    if ($appUserModelId -notmatch '^[^\\/:*?"<>|]+![^\\/:*?"<>|]+$') {
+                        throw "Invalid installed-app identifier '$appUserModelId'."
+                    }
+                    $process = Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$appUserModelId" -PassThru
+                    $launches += [pscustomobject]@{ ProcessName = $processName; ProcessId = $process.Id; StartedAt = Get-Date }
+                    Start-Sleep -Milliseconds 500
+                }
+                catch {
+                    Write-HaySpaceLog -Level Warning -Message "Could not launch installed app '$appUserModelId': $($_.Exception.Message)"
+                }
+            }
+            elseif ((-not $alreadyRunning -or $isSessionBrowser) -and $processPath -and (Test-Path -LiteralPath $processPath)) {
                 try {
                     $arguments = if ($app.PSObject.Properties['Arguments']) { [string]$app.Arguments } else { '' }
                     if ($browserMode -eq 'Session' -and $processName -in @('msedge', 'chrome', 'firefox')) {

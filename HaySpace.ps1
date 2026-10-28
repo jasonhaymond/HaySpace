@@ -186,6 +186,120 @@ function Show-StartupProfileChooser {
     return $null
 }
 
+function Show-InstalledAppPicker {
+    param([Parameter(Mandatory)]$Profile, [Parameter(Mandatory)]$Owner)
+    $installedApps = @(Get-StartApps | Where-Object { $_.Name -and $_.AppID } | Sort-Object Name, AppID)
+    if (-not $installedApps.Count) { throw 'Windows did not return any installed Start-menu apps.' }
+    $processNames = @(
+        @($Profile.Applications | ForEach-Object ProcessName)
+        @($Profile.Windows | ForEach-Object ProcessName)
+        @([HaySpace.NativeWindow]::GetWindows() | ForEach-Object ProcessName)
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Sort-Object -Unique
+
+    $dialog = New-Object Windows.Window
+    $dialog.Title = 'Add installed Windows app'
+    $dialog.Width = 560
+    $dialog.Height = 520
+    $dialog.MinWidth = 480
+    $dialog.MinHeight = 400
+    $dialog.Owner = $Owner
+    $dialog.WindowStartupLocation = 'CenterOwner'
+    $panel = New-Object Windows.Controls.DockPanel
+    $panel.Margin = '18'
+    $buttons = New-Object Windows.Controls.StackPanel
+    $buttons.Orientation = 'Horizontal'
+    $buttons.HorizontalAlignment = 'Right'
+    $buttons.Margin = '0,12,0,0'
+    [Windows.Controls.DockPanel]::SetDock($buttons, 'Bottom')
+    $addButton = New-Object Windows.Controls.Button
+    $addButton.Content = 'Add app'
+    $addButton.IsDefault = $true
+    $addButton.IsEnabled = $false
+    $cancelButton = New-Object Windows.Controls.Button
+    $cancelButton.Content = 'Cancel'
+    $cancelButton.IsCancel = $true
+    $buttons.Children.Add($addButton) | Out-Null
+    $buttons.Children.Add($cancelButton) | Out-Null
+    $panel.Children.Add($buttons) | Out-Null
+
+    $content = New-Object Windows.Controls.StackPanel
+    $description = New-Object Windows.Controls.TextBlock
+    $description.Text = 'Choose an installed app. HaySpace opens it through the Windows app catalog, without accessing its protected installation folder.'
+    $description.TextWrapping = 'Wrap'
+    $description.Margin = '0,0,0,8'
+    $content.Children.Add($description) | Out-Null
+    $appList = New-Object Windows.Controls.ListBox
+    $appList.DisplayMemberPath = 'Name'
+    $appList.ItemsSource = $installedApps
+    $appList.MinHeight = 250
+    $content.Children.Add($appList) | Out-Null
+    $appIdLabel = New-Object Windows.Controls.TextBlock
+    $appIdLabel.Margin = '0,6,0,2'
+    $appIdLabel.Foreground = [Windows.Media.Brushes]::DimGray
+    $content.Children.Add($appIdLabel) | Out-Null
+    $processNameLabel = New-Object Windows.Controls.TextBlock
+    $processNameLabel.Text = 'Window process name (used to match saved placements)'
+    $processNameLabel.Margin = '0,8,0,2'
+    $content.Children.Add($processNameLabel) | Out-Null
+    $processNameControl = New-Object Windows.Controls.ComboBox
+    $processNameControl.IsEditable = $true
+    $processNameControl.ItemsSource = $processNames
+    $content.Children.Add($processNameControl) | Out-Null
+    $panel.Children.Add($content) | Out-Null
+
+    $appList.Add_SelectionChanged({
+        $selectedApp = $appList.SelectedItem
+        $appIdLabel.Text = if ($selectedApp) { [string]$selectedApp.AppID } else { '' }
+        if ($selectedApp) {
+            $packageFamily = ([string]$selectedApp.AppID -split '!', 2)[0]
+            $familySeparator = $packageFamily.LastIndexOf('_')
+            $packagePattern = $null
+            if ($familySeparator -gt 0) {
+                $packageName = $packageFamily.Substring(0, $familySeparator)
+                $publisherId = $packageFamily.Substring($familySeparator + 1)
+                $packagePattern = '^' + [regex]::Escape($packageName) + '_.*__' + [regex]::Escape($publisherId) + '$'
+            }
+            $matchedWindow = @(
+                @($Profile.Applications) + @($Profile.Windows) |
+                    Where-Object {
+                        $processPath = if ($_.PSObject.Properties['ProcessPath']) { [string]$_.ProcessPath } else { '' }
+                        $packageFolder = if ($processPath) { [IO.Path]::GetFileName([IO.Path]::GetDirectoryName($processPath)) } else { '' }
+                        $packagePattern -and $packageFolder -match $packagePattern
+                    } |
+                    Select-Object -First 1
+            )
+            if ($matchedWindow.Count) {
+                $processNameControl.Text = [string]$matchedWindow[0].ProcessName
+            }
+            elseif ($processNames.Count -eq 1) {
+                $processNameControl.Text = [string]$processNames[0]
+            }
+            else {
+                $processNameControl.Text = ''
+            }
+        }
+        $addButton.IsEnabled = [bool]$selectedApp
+    }.GetNewClosure())
+    $addButton.Add_Click({
+        $app = $appList.SelectedItem
+        $processName = $processNameControl.Text.Trim()
+        if (-not $app) { return }
+        if (-not $processName) {
+            [System.Windows.MessageBox]::Show('Enter or select the process name used by this app window.', 'Window process name required', 'OK', 'Warning') | Out-Null
+            return
+        }
+        $dialog.Tag = [pscustomobject]@{
+            Name = [string]$app.Name
+            AppUserModelId = [string]$app.AppID
+            ProcessName = $processName
+        }
+        $dialog.DialogResult = $true
+    }.GetNewClosure())
+    $dialog.Content = $panel
+    if ($dialog.ShowDialog()) { return $dialog.Tag }
+    return $null
+}
+
 function Invoke-AutoProfileStartup {
     try {
         $displays = @(Get-HaySpaceDisplays)
@@ -234,8 +348,7 @@ function Invoke-AutoProfileStartup {
             Set-Status 'Automatic profile loading was canceled.'
             return
         }
-        $settings.DisplayProfileAssignments[$configurationKey] = [string]$profile.ProfileName
-        Save-HaySpaceSettings $settings
+        Set-HaySpaceDisplayProfileAssignment -Displays $displays -ProfileName ([string]$profile.ProfileName) | Out-Null
         $result = Restore-HaySpaceWorkspace -Profile $profile -LaunchApplications
         Set-Status "Loaded '$($profile.ProfileName)' for this display configuration; positioned $($result.PositionedWindows) window(s)."
     }
@@ -373,6 +486,7 @@ function Show-MigrationAssistant {
     $content.Children.Add($appsHeader) | Out-Null
     $pathRows = @()
     foreach ($application in @($Profile.Applications)) {
+        if ($application.PSObject.Properties['AppUserModelId'] -and $application.AppUserModelId) { continue }
         if ($application.ProcessPath -and (Test-Path -LiteralPath $application.ProcessPath)) { continue }
         $row = New-Object Windows.Controls.DockPanel
         $row.Margin = '0,3'
@@ -909,6 +1023,7 @@ function Show-ProfileEditor {
     foreach ($column in @(
         @{ Header = 'Application'; Binding = 'ProcessName'; Width = '130' },
         @{ Header = 'Executable path'; Binding = 'ProcessPath'; Width = '*' },
+        @{ Header = 'Installed app ID'; Binding = 'AppUserModelId'; Width = '180' },
         @{ Header = 'Arguments (optional)'; Binding = 'Arguments'; Width = '160' },
         @{ Header = 'Launch order'; Binding = 'LaunchOrder'; Width = '80' }
     )) {
@@ -930,6 +1045,7 @@ function Show-ProfileEditor {
     $applications = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
     foreach ($application in @($Profile.Applications)) {
         if (-not $application.PSObject.Properties['Arguments']) { $application | Add-Member -NotePropertyName Arguments -NotePropertyValue '' }
+        if (-not $application.PSObject.Properties['AppUserModelId']) { $application | Add-Member -NotePropertyName AppUserModelId -NotePropertyValue '' }
         if (-not $application.PSObject.Properties['Launch']) { $application | Add-Member -NotePropertyName Launch -NotePropertyValue $true }
         if (-not $application.PSObject.Properties['LaunchOrder']) { $application | Add-Member -NotePropertyName LaunchOrder -NotePropertyValue $applications.Count }
         $applications.Add($application)
@@ -941,9 +1057,12 @@ function Show-ProfileEditor {
     $appButtons.Orientation = 'Horizontal'
     $addAppButton = New-Object Windows.Controls.Button
     $addAppButton.Content = 'Add application'
+    $addInstalledAppButton = New-Object Windows.Controls.Button
+    $addInstalledAppButton.Content = 'Add installed app'
     $removeAppButton = New-Object Windows.Controls.Button
     $removeAppButton.Content = 'Remove selected'
     $appButtons.Children.Add($addAppButton) | Out-Null
+    $appButtons.Children.Add($addInstalledAppButton) | Out-Null
     $appButtons.Children.Add($removeAppButton) | Out-Null
     $panel.Children.Add($appButtons) | Out-Null
     $appHelp = New-Object Windows.Controls.TextBlock
@@ -1106,6 +1225,30 @@ function Show-ProfileEditor {
             })
         }
     })
+    $addInstalledAppButton.Add_Click({
+        try {
+            $installedApp = Show-InstalledAppPicker -Profile $Profile -Owner $window
+            if (-not $installedApp) { return }
+            $existingApp = $applications | Where-Object ProcessName -eq $installedApp.ProcessName | Select-Object -First 1
+            if ($existingApp) {
+                $existingApp.ProcessPath = ''
+                $existingApp.AppUserModelId = $installedApp.AppUserModelId
+            }
+            else {
+                $applications.Add([pscustomobject]@{
+                    ProcessName = $installedApp.ProcessName
+                    ProcessPath = ''
+                    AppUserModelId = $installedApp.AppUserModelId
+                    Arguments = ''
+                    Launch = $true
+                    LaunchOrder = $applications.Count
+                })
+            }
+        }
+        catch {
+            [System.Windows.MessageBox]::Show($_.Exception.Message, 'Unable to add installed app', 'OK', 'Error') | Out-Null
+        }
+    }.GetNewClosure())
     $removeAppButton.Add_Click({
         if ($appsGrid.SelectedItem) {
             $removedApplication = $appsGrid.SelectedItem
@@ -1304,6 +1447,22 @@ $window.FindName('LoadButton').Add_Click({
     }
     catch {
         [System.Windows.MessageBox]::Show($_.Exception.Message, 'Unable to load profile', 'OK', 'Error') | Out-Null
+    }
+})
+$window.FindName('SetDisplayDefaultButton').Add_Click({
+    $profile = $script:ProfileList.SelectedItem
+    if (-not $profile) {
+        [System.Windows.MessageBox]::Show('Select the profile to use for the connected displays.', 'Set display default') | Out-Null
+        return
+    }
+    try {
+        $displays = @(Get-HaySpaceDisplays)
+        $configurationKey = Set-HaySpaceDisplayProfileAssignment -Displays $displays -ProfileName ([string]$profile.ProfileName)
+        Set-Status "'$($profile.ProfileName)' is now the default for this display layout."
+        Write-HaySpaceLog -Message "Assigned profile '$($profile.ProfileName)' to the current display configuration '$configurationKey'."
+    }
+    catch {
+        [System.Windows.MessageBox]::Show($_.Exception.Message, 'Unable to set display default', 'OK', 'Error') | Out-Null
     }
 })
 $window.FindName('MigrationButton').Add_Click({

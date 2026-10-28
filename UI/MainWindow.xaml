@@ -51,6 +51,7 @@
                             <StackPanel DockPanel.Dock="Bottom" Margin="0,20,0,0">
                                 <WrapPanel>
                                     <Button x:Name="LoadButton" Content="Load workspace" Background="#315CE8" Foreground="White" FontWeight="SemiBold"/>
+                                    <Button x:Name="SetDisplayDefaultButton" Content="Set default for displays"/>
                                     <Button x:Name="NewButton" Content="New"/>
                                     <Button x:Name="EditButton" Content="Edit"/>
                                     <Button x:Name="CloneButton" Content="Clone"/>

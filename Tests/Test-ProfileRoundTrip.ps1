@@ -14,6 +14,7 @@ $profile = [pscustomobject]@{
         [pscustomobject]@{
             ProcessName = 'notepad'
             ProcessPath = 'C:\Windows\System32\notepad.exe'
+            AppUserModelId = 'MSTeams_8weky3d8bbwe!MSTeams'
             Arguments = ''
             Launch = $true
             LaunchOrder = 0
@@ -24,6 +25,9 @@ $profile = [pscustomobject]@{
     ExplorerFolders = @()
     Displays = @()
 }
+$assignmentKey = $null
+$hadPreviousAssignment = $false
+$previousAssignment = $null
 try {
     $displayLayout = @(
         [pscustomobject]@{ DisplayName = 'Left'; DeviceName = '\\.\DISPLAY2'; X = -1920; Y = 0; Width = 1920; Height = 1080; Primary = $false }
@@ -38,13 +42,25 @@ try {
     if ($displayKey -ne (Get-HaySpaceDisplayConfigurationKey -Displays $reorderedDisplayLayout) -or $displayKey -eq (Get-HaySpaceDisplayConfigurationKey -Displays $differentDisplayLayout)) {
         throw 'Display configuration identity was not stable or did not distinguish a resolution change.'
     }
+    $assignmentDisplays = @(
+        [pscustomobject]@{ DisplayName = 'HaySpace test display ' + [guid]::NewGuid().ToString('N'); DeviceName = '\\.\DISPLAY_TEST'; X = 0; Y = 0; Width = 1280; Height = 720; Primary = $true }
+    )
+    $assignmentKey = Get-HaySpaceDisplayConfigurationKey -Displays $assignmentDisplays
+    $settingsBeforeAssignment = Get-HaySpaceSettings
+    $hadPreviousAssignment = $settingsBeforeAssignment.DisplayProfileAssignments.ContainsKey($assignmentKey)
+    $previousAssignment = if ($hadPreviousAssignment) { [string]$settingsBeforeAssignment.DisplayProfileAssignments[$assignmentKey] } else { $null }
+    Set-HaySpaceDisplayProfileAssignment -Displays $assignmentDisplays -ProfileName $name | Out-Null
+    $savedAssignment = (Get-HaySpaceSettings).DisplayProfileAssignments[$assignmentKey]
+    if ($savedAssignment -ne $name) {
+        throw 'The selected default profile was not saved for the display configuration.'
+    }
     $startupCommand = Get-HaySpaceStartupCommand -ScriptPath (Join-Path $root 'HaySpace.ps1')
     if ($startupCommand -notmatch '-AutoLoadProfile -Tray' -or $startupCommand -notmatch [regex]::Escape((Join-Path $root 'HaySpace.ps1'))) {
         throw 'The user-logon command did not include display-based startup or the HaySpace script path.'
     }
     Save-HaySpaceProfile -Profile $profile | Out-Null
     $loaded = Get-HaySpaceProfiles | Where-Object ProfileName -eq $name | Select-Object -First 1
-    if (-not $loaded -or $loaded.ProfileType -ne 'Workspace Layout' -or @($loaded.Applications).Count -ne 1 -or $loaded.Applications[0].Arguments -ne '' -or -not $loaded.Applications[0].Launch) {
+    if (-not $loaded -or $loaded.ProfileType -ne 'Workspace Layout' -or @($loaded.Applications).Count -ne 1 -or $loaded.Applications[0].Arguments -ne '' -or -not $loaded.Applications[0].Launch -or $loaded.Applications[0].AppUserModelId -ne 'MSTeams_8weky3d8bbwe!MSTeams') {
         throw 'Profile JSON round-trip did not preserve profile and application defaults.'
     }
     $legacyProfile = [pscustomobject]@{
@@ -62,4 +78,14 @@ try {
 }
 finally {
     Remove-HaySpaceProfile -ProfileName $name
+    if ($assignmentKey) {
+        $settings = Get-HaySpaceSettings
+        if ($hadPreviousAssignment) {
+            $settings.DisplayProfileAssignments[$assignmentKey] = $previousAssignment
+        }
+        else {
+            $settings.DisplayProfileAssignments.Remove($assignmentKey)
+        }
+        Save-HaySpaceSettings $settings
+    }
 }
