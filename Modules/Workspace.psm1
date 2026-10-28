@@ -519,21 +519,43 @@ function Restore-HaySpaceWorkspace {
         }
     }
 
-    $deadline = (Get-Date).AddSeconds(15)
-    $moved = 0
+    $profileProcessNames = @(
+        $profileApplications |
+            Where-Object { $_.ProcessName -and -not ($_.PSObject.Properties['Launch'] -and -not $_.Launch) } |
+            Select-Object -ExpandProperty ProcessName -Unique
+    )
+    $startupTimeoutSeconds = if ($LaunchApplications -and $profileWindows.Count -gt 0 -and $profileProcessNames.Count -gt 0) { 45 } else { 15 }
+    $deadline = (Get-Date).AddSeconds($startupTimeoutSeconds)
     $requestedCount = $profileWindows.Count
     $placedTargets = @{}
+    $trackedTargets = @{}
+    $targetIndex = 0
+    foreach ($target in $profileWindows) {
+        if ($target.ProcessName -and $profileProcessNames -contains [string]$target.ProcessName -and $target.Title) {
+            $trackedTargets[$targetIndex.ToString()] = $true
+        }
+        $targetIndex++
+    }
+    $settleSeconds = if ($Profile.PSObject.Properties['LaunchDelaySeconds']) {
+        [math]::Max(0, [math]::Min(10, [int]$Profile.LaunchDelaySeconds))
+    }
+    else {
+        2
+    }
+    $settledSince = $null
     $settings = Get-HaySpaceSettings
     do {
         $currentWindows = [HaySpace.NativeWindow]::GetWindows()
         $usedHandles = @{}
         $targetIndex = 0
+        $placedThisPass = 0
+        $exactTitleMatches = @{}
         foreach ($target in $profileWindows) {
             $targetKey = $targetIndex.ToString()
             $targetIndex++
-            if ($placedTargets.ContainsKey($targetKey)) { continue }
             $eligible = @($currentWindows | Where-Object { $_.Width -gt 0 -and $_.Height -gt 0 -and -not $usedHandles.ContainsKey($_.Handle.ToInt64().ToString()) })
             $candidate = $eligible | Where-Object { $_.ProcessName -eq $target.ProcessName -and $_.Title -eq $target.Title } | Select-Object -First 1
+            if ($candidate) { $exactTitleMatches[$targetKey] = $true }
             if (-not $candidate) {
                 $candidate = $eligible | Where-Object { $_.ProcessName -eq $target.ProcessName } | Select-Object -First 1
             }
@@ -576,16 +598,63 @@ function Restore-HaySpaceWorkspace {
             $x = [math]::Max($display.WorkX - $frameAllowance, [math]::Min($x, $display.WorkX + $workWidth - $width + $frameAllowance))
             $y = [math]::Max($display.WorkY - $frameAllowance, [math]::Min($y, $display.WorkY + $workHeight - $height + $frameAllowance))
             $state = switch ([string]$target.State) { 'Maximized' { 1 } 'Minimized' { 2 } default { 0 } }
-            if ([HaySpace.NativeWindow]::Move($candidate.Handle, $x, $y, $width, $height, $state)) {
-                $placedTargets[$targetKey] = $true
-                $moved++
+            $candidateDisplay = Get-HaySpaceWindowDisplay -Window $candidate -Displays $displays
+            $needsMove = switch ($state) {
+                1 {
+                    -not $candidate.Maximized -or $candidate.Minimized -or
+                        -not $candidateDisplay -or $candidateDisplay.DeviceName -ne $display.DeviceName
+                }
+                2 {
+                    -not $candidate.Minimized -or
+                        [math]::Abs($candidate.X - $x) -gt 1 -or
+                        [math]::Abs($candidate.Y - $y) -gt 1 -or
+                        [math]::Abs($candidate.Width - $width) -gt 1 -or
+                        [math]::Abs($candidate.Height - $height) -gt 1
+                }
+                default {
+                    $candidate.Maximized -or $candidate.Minimized -or
+                        [math]::Abs($candidate.X - $x) -gt 1 -or
+                        [math]::Abs($candidate.Y - $y) -gt 1 -or
+                        [math]::Abs($candidate.Width - $width) -gt 1 -or
+                        [math]::Abs($candidate.Height - $height) -gt 1
+                }
+            }
+            if ($needsMove -and -not [HaySpace.NativeWindow]::Move($candidate.Handle, $x, $y, $width, $height, $state)) {
+                continue
+            }
+            $placedTargets[$targetKey] = $true
+            $placedThisPass++
+        }
+        $allLaunchedTargetsMatched = $true
+        foreach ($targetKey in $trackedTargets.Keys) {
+            if (-not $exactTitleMatches.ContainsKey($targetKey)) {
+                $allLaunchedTargetsMatched = $false
+                break
             }
         }
-        if ($moved -ge $requestedCount -or (Get-Date) -ge $deadline) { break }
+        if ($placedThisPass -eq $requestedCount -and $allLaunchedTargetsMatched) {
+            if (-not $settledSince) { $settledSince = Get-Date }
+            if ($launches.Count -eq 0 -or ((Get-Date) - $settledSince).TotalSeconds -ge $settleSeconds) { break }
+        }
+        else {
+            $settledSince = $null
+        }
+        if ((Get-Date) -ge $deadline) { break }
         Start-Sleep -Milliseconds 500
     } while ((Get-Date) -lt $deadline)
-    Write-HaySpaceLog -Message "Restored profile '$($Profile.ProfileName)': positioned $moved window(s)."
-    return [pscustomobject]@{ PositionedWindows = $moved; RequestedWindows = $requestedCount; LaunchedApplications = $launches.Count; RestoredExplorerFolders = $profileExplorerFolders.Count }
+    if (-not $allLaunchedTargetsMatched) {
+        $unmatchedTitles = @(
+            foreach ($targetKey in $trackedTargets.Keys) {
+                if (-not $exactTitleMatches.ContainsKey($targetKey)) {
+                    [string]$profileWindows[[int]$targetKey].Title
+                }
+            }
+        ) -join ', '
+        Write-HaySpaceLog -Level Warning -Message "Application windows did not reach their saved titles within $startupTimeoutSeconds seconds: $unmatchedTitles."
+    }
+    $positionedCount = $placedTargets.Count
+    Write-HaySpaceLog -Message "Restored profile '$($Profile.ProfileName)': positioned $positionedCount window(s)."
+    return [pscustomobject]@{ PositionedWindows = $positionedCount; RequestedWindows = $requestedCount; LaunchedApplications = $launches.Count; RestoredExplorerFolders = $profileExplorerFolders.Count }
 }
 
 Export-ModuleMember -Function Get-HaySpaceDisplays, Get-HaySpaceDisplayConfigurationKey, Get-HaySpaceExplorerFolders, Get-HaySpaceBrowserUrl, Set-HaySpaceDisplayName, New-HaySpaceCapture, Restore-HaySpaceWorkspace, Get-HaySpaceBrowserPath

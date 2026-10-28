@@ -128,7 +128,28 @@ try {
         }
     }
 
-    Write-Output 'Split-window capture and restore preserve physical bounds and frame offsets on the primary display.'
+    $maximizeTarget = $profile.Windows | Where-Object Title -eq $windowTitles[0] | Select-Object -First 1
+    $maximizeTarget.State = 'Maximized'
+    $null = Restore-HaySpaceWorkspace -Profile $profile
+    [System.Windows.Forms.Application]::DoEvents()
+    Start-Sleep -Milliseconds 100
+    $maximizedWindow = [HaySpace.NativeWindow]::GetWindows() | Where-Object Title -eq $maximizeTarget.Title | Select-Object -First 1
+    $maximizedCenterX = $maximizedWindow.X + ($maximizedWindow.Width / 2)
+    $maximizedCenterY = $maximizedWindow.Y + ($maximizedWindow.Height / 2)
+    $maximizedOnTarget = $maximizedCenterX -ge $displays[0].X -and
+        $maximizedCenterX -lt ($displays[0].X + $displays[0].Width) -and
+        $maximizedCenterY -ge $displays[0].Y -and
+        $maximizedCenterY -lt ($displays[0].Y + $displays[0].Height)
+    $frameAllowance = 32
+    $fillsWorkArea = [math]::Abs($maximizedWindow.X - $displays[0].WorkX) -le $frameAllowance -and
+        [math]::Abs($maximizedWindow.Y - $displays[0].WorkY) -le $frameAllowance -and
+        [math]::Abs(($maximizedWindow.X + $maximizedWindow.Width) - ($displays[0].WorkX + $displays[0].WorkWidth)) -le $frameAllowance -and
+        [math]::Abs(($maximizedWindow.Y + $maximizedWindow.Height) - ($displays[0].WorkY + $displays[0].WorkHeight)) -le $frameAllowance
+    if (-not $maximizedWindow.Maximized -or -not $maximizedOnTarget -or -not $fillsWorkArea) {
+        throw "Maximized restore did not fill the target display '$($maximizeTarget.DeviceName)' for '$($maximizeTarget.Title)'."
+    }
+
+    Write-Output 'Split-window bounds, frame offsets, and maximized work-area bounds restore correctly on the primary display.'
 }
 finally {
     foreach ($form in $forms) {
