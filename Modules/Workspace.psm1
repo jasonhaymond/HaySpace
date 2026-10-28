@@ -1,5 +1,19 @@
 Set-StrictMode -Version Latest
 
+if (-not ('HaySpace.NativeIcon' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace HaySpace {
+    public static class NativeIcon {
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool DestroyIcon(IntPtr icon);
+    }
+}
+'@
+}
+
 if (-not ('HaySpace.NativeWindow' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
@@ -323,14 +337,35 @@ function Start-HaySpaceApplication {
     if (-not $WorkingDirectory) {
         $WorkingDirectory = [IO.Path]::GetDirectoryName($resolvedPath)
     }
-    $shell = New-Object -ComObject Shell.Application
+    $shortcutPath = Join-Path ([IO.Path]::GetTempPath()) ('HaySpace-Launch-' + [guid]::NewGuid().ToString('N') + '.lnk')
+    $shell = $null
+    $shortcut = $null
     try {
-        $shell.ShellExecute($resolvedPath, $Arguments, $WorkingDirectory, 'open', 1)
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = $resolvedPath
+        $shortcut.Arguments = $Arguments
+        $shortcut.WorkingDirectory = $WorkingDirectory
+        $shortcut.WindowStyle = 1
+        $shortcut.Save()
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut)
+        $shortcut = $null
+
+        $explorerPath = Join-Path $env:WINDIR 'explorer.exe'
+        Start-Process -FilePath $explorerPath -ArgumentList ('"{0}"' -f $shortcutPath) -WindowStyle Hidden | Out-Null
+        Start-Sleep -Milliseconds 750
     }
     finally {
-        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)
+        if ($shortcut) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) }
+        if ($shell) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) }
+        if (Test-Path -LiteralPath $shortcutPath) {
+            Remove-Item -LiteralPath $shortcutPath -Force
+        }
     }
-    return [pscustomobject]@{ ProcessName = [IO.Path]::GetFileNameWithoutExtension($resolvedPath); StartedAt = Get-Date }
+    return [pscustomobject]@{
+        ProcessName = [IO.Path]::GetFileNameWithoutExtension($resolvedPath)
+        StartedAt = Get-Date
+    }
 }
 
 function New-HaySpaceCapture {
@@ -446,6 +481,43 @@ function Get-HaySpaceBrowserPath {
     return $null
 }
 
+function Resolve-HaySpaceApplicationUserModelId {
+    param(
+        [string]$ProcessName,
+        [string]$ConfiguredAppUserModelId,
+        [AllowNull()][object[]]$InstalledApps
+    )
+    if ($ProcessName -notin @('ms-teams', 'Teams')) { return $ConfiguredAppUserModelId }
+    if ($null -eq $InstalledApps) {
+        try {
+            $InstalledApps = @(Get-StartApps)
+        }
+        catch {
+            Write-HaySpaceLog -Level Warning -Message "Could not discover the registered Microsoft Teams app: $($_.Exception.Message)"
+            return $ConfiguredAppUserModelId
+        }
+    }
+
+    $teamsApp = @(
+        $InstalledApps |
+            Where-Object {
+                $_.Name -eq 'Microsoft Teams' -and
+                $_.AppID -match '(?i)^MSTeams_[^!]+!MSTeams$'
+            } |
+            Sort-Object AppID |
+            Select-Object -First 1
+    )
+    if ($teamsApp.Count -gt 0) { return [string]$teamsApp[0].AppID }
+    if ($ConfiguredAppUserModelId) { return $ConfiguredAppUserModelId }
+    Write-HaySpaceLog -Level Warning -Message 'Microsoft Teams has no registered packaged-app identity; it cannot be activated from a hidden tray process.'
+    return ''
+}
+
+function Test-HaySpaceApplicationProcessRunning {
+    param([Parameter(Mandatory)][string]$ProcessName)
+    return [bool](Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Select-Object -First 1)
+}
+
 function Restore-HaySpaceWorkspace {
     param([Parameter(Mandatory)]$Profile, [switch]$LaunchApplications)
     $displays = @(Get-HaySpaceDisplays)
@@ -492,8 +564,14 @@ function Restore-HaySpaceWorkspace {
             if ($app.PSObject.Properties['Launch'] -and -not $app.Launch) { continue }
             $processName = if ($app.PSObject.Properties['ProcessName']) { [string]$app.ProcessName } else { '' }
             $processPath = if ($app.PSObject.Properties['ProcessPath']) { [string]$app.ProcessPath } else { '' }
-            $appUserModelId = if ($app.PSObject.Properties['AppUserModelId']) { [string]$app.AppUserModelId } else { '' }
+            $configuredAppUserModelId = if ($app.PSObject.Properties['AppUserModelId']) { [string]$app.AppUserModelId } else { '' }
+            $appUserModelId = Resolve-HaySpaceApplicationUserModelId -ProcessName $processName -ConfiguredAppUserModelId $configuredAppUserModelId
             $alreadyRunning = if ($processName) { Test-HaySpaceApplicationWindowOpen -Windows $currentWindows -ProcessName $processName } else { $false }
+            $isTeamsProcess = $processName -in @('ms-teams', 'Teams')
+            $teamsProcessRunning = if ($isTeamsProcess) { Test-HaySpaceApplicationProcessRunning -ProcessName $processName } else { $false }
+            if ($isTeamsProcess -and $teamsProcessRunning -and -not $alreadyRunning) {
+                Write-HaySpaceLog -Message "Microsoft Teams is running without a visible window; activating its installed app to open the interface."
+            }
             $launchAlreadyRequested = [bool]($launches | Where-Object ProcessName -eq $processName | Select-Object -First 1)
             $isSessionBrowser = $browserMode -eq 'Session' -and $processName -in @('msedge', 'chrome', 'firefox')
             if (-not $launchAlreadyRequested -and (-not $alreadyRunning -or $isSessionBrowser) -and $appUserModelId) {
@@ -558,23 +636,19 @@ function Restore-HaySpaceWorkspace {
         }
     }
 
-    $profileProcessNames = @(
-        $profileApplications |
-            Where-Object { $_.ProcessName -and -not ($_.PSObject.Properties['Launch'] -and -not $_.Launch) } |
-            Select-Object -ExpandProperty ProcessName -Unique
-    )
-    $startupTimeoutSeconds = if ($LaunchApplications -and $profileWindows.Count -gt 0 -and $profileProcessNames.Count -gt 0) { 45 } else { 15 }
-    $deadline = (Get-Date).AddSeconds($startupTimeoutSeconds)
     $requestedCount = $profileWindows.Count
     $placedTargets = @{}
     $trackedTargets = @{}
+    $launchedProcessNames = @($launches | Where-Object ProcessName | Select-Object -ExpandProperty ProcessName -Unique)
     $targetIndex = 0
     foreach ($target in $profileWindows) {
-        if ($target.ProcessName -and $profileProcessNames -contains [string]$target.ProcessName -and $target.Title) {
+        if ($target.ProcessName -and $launchedProcessNames -contains [string]$target.ProcessName -and $target.Title) {
             $trackedTargets[$targetIndex.ToString()] = $true
         }
         $targetIndex++
     }
+    $startupTimeoutSeconds = if ($trackedTargets.Count -gt 0) { 45 } else { 0 }
+    $deadline = (Get-Date).AddSeconds($startupTimeoutSeconds)
     $settleSeconds = if ($Profile.PSObject.Properties['LaunchDelaySeconds']) {
         [math]::Max(0, [math]::Min(10, [int]$Profile.LaunchDelaySeconds))
     }
@@ -587,14 +661,11 @@ function Restore-HaySpaceWorkspace {
         $currentWindows = [HaySpace.NativeWindow]::GetWindows()
         $usedHandles = @{}
         $targetIndex = 0
-        $placedThisPass = 0
-        $exactTitleMatches = @{}
         foreach ($target in $profileWindows) {
             $targetKey = $targetIndex.ToString()
             $targetIndex++
             $eligible = @($currentWindows | Where-Object { $_.Width -gt 0 -and $_.Height -gt 0 -and -not $usedHandles.ContainsKey($_.Handle.ToInt64().ToString()) })
             $candidate = $eligible | Where-Object { $_.ProcessName -eq $target.ProcessName -and $_.Title -eq $target.Title } | Select-Object -First 1
-            if ($candidate) { $exactTitleMatches[$targetKey] = $true }
             if (-not $candidate) {
                 $candidate = $eligible | Where-Object { $_.ProcessName -eq $target.ProcessName } | Select-Object -First 1
             }
@@ -662,34 +733,35 @@ function Restore-HaySpaceWorkspace {
                 continue
             }
             $placedTargets[$targetKey] = $true
-            $placedThisPass++
         }
-        $allLaunchedTargetsMatched = $true
-        foreach ($targetKey in $trackedTargets.Keys) {
-            if (-not $exactTitleMatches.ContainsKey($targetKey)) {
-                $allLaunchedTargetsMatched = $false
-                break
-            }
-        }
-        if ($placedThisPass -eq $requestedCount -and $allLaunchedTargetsMatched) {
+        $pendingLaunchedTargets = @(
+            $trackedTargets.Keys |
+                Where-Object { -not $placedTargets.ContainsKey($_) }
+        )
+        if ($pendingLaunchedTargets.Count -eq 0) {
+            if ($trackedTargets.Count -eq 0 -or $settleSeconds -eq 0) { break }
             if (-not $settledSince) { $settledSince = Get-Date }
-            if ($launches.Count -eq 0 -or ((Get-Date) - $settledSince).TotalSeconds -ge $settleSeconds) { break }
+            if (((Get-Date) - $settledSince).TotalSeconds -ge $settleSeconds) { break }
         }
         else {
             $settledSince = $null
         }
-        if ((Get-Date) -ge $deadline) { break }
+        if ($pendingLaunchedTargets.Count -gt 0 -and (Get-Date) -ge $deadline) { break }
         Start-Sleep -Milliseconds 500
     } while ((Get-Date) -lt $deadline)
-    if (-not $allLaunchedTargetsMatched) {
+    $pendingLaunchedTargets = @(
+        $trackedTargets.Keys |
+            Where-Object { -not $placedTargets.ContainsKey($_) }
+    )
+    if ($pendingLaunchedTargets.Count -gt 0) {
         $unmatchedTitles = @(
-            foreach ($targetKey in $trackedTargets.Keys) {
-                if (-not $exactTitleMatches.ContainsKey($targetKey)) {
+            foreach ($targetKey in $pendingLaunchedTargets) {
+                if (-not $placedTargets.ContainsKey($targetKey)) {
                     [string]$profileWindows[[int]$targetKey].Title
                 }
             }
         ) -join ', '
-        Write-HaySpaceLog -Level Warning -Message "Application windows did not reach their saved titles within $startupTimeoutSeconds seconds: $unmatchedTitles."
+        Write-HaySpaceLog -Level Warning -Message "Launched application windows were not opened and arranged within $startupTimeoutSeconds seconds: $unmatchedTitles."
     }
     $positionedCount = $placedTargets.Count
     Write-HaySpaceLog -Message "Restored profile '$($Profile.ProfileName)': positioned $positionedCount window(s)."

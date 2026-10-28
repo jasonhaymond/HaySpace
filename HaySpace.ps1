@@ -55,6 +55,11 @@ $reader = New-Object System.Xml.XmlNodeReader $xaml
 $window = [Windows.Markup.XamlReader]::Load($reader)
 $window.Title = 'HaySpace'
 $window.WindowStartupLocation = 'CenterScreen'
+$windowIconPath = Join-Path $root 'icons\HaySpace_Tray_Icon.png'
+if (-not (Test-Path -LiteralPath $windowIconPath -PathType Leaf)) {
+    throw "HaySpace application icon is unavailable: '$windowIconPath'."
+}
+$window.Icon = [Windows.Media.Imaging.BitmapFrame]::Create([uri]::new($windowIconPath, [UriKind]::Absolute))
 
 $script:ProfileList = $window.FindName('ProfileList')
 $script:ProfileSummary = $window.FindName('ProfileSummary')
@@ -1641,7 +1646,40 @@ $window.FindName('OpenDataFolderButton').Add_Click({
 $window.FindName('RestartButton').Add_Click({ Request-HaySpaceRestart })
 
 $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
-$notifyIcon.Icon = [System.Drawing.SystemIcons]::Application
+$trayIconPath = Join-Path $root 'icons\HaySpace_Tray_Icon.png'
+if (-not (Test-Path -LiteralPath $trayIconPath -PathType Leaf)) {
+    throw "HaySpace tray icon is unavailable: '$trayIconPath'."
+}
+$traySource = [Drawing.Bitmap]::FromFile($trayIconPath)
+try {
+    $trayBitmap = New-Object Drawing.Bitmap(32, 32, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    try {
+        $graphics = [Drawing.Graphics]::FromImage($trayBitmap)
+        try {
+            $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+            $graphics.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+            $graphics.Clear([Drawing.Color]::Transparent)
+            $graphics.DrawImage($traySource, 0, 0, 32, 32)
+        }
+        finally {
+            $graphics.Dispose()
+        }
+        $trayIconHandle = $trayBitmap.GetHicon()
+        try {
+            $script:HaySpaceTrayIcon = [Drawing.Icon]::FromHandle($trayIconHandle).Clone()
+        }
+        finally {
+            [void][HaySpace.NativeIcon]::DestroyIcon($trayIconHandle)
+        }
+    }
+    finally {
+        $trayBitmap.Dispose()
+    }
+}
+finally {
+    $traySource.Dispose()
+}
+$notifyIcon.Icon = $script:HaySpaceTrayIcon
 $notifyIcon.Text = 'HaySpace'
 $trayMenu = New-Object System.Windows.Forms.ContextMenuStrip
 $trayMenu.Add_Opening({
@@ -1696,6 +1734,7 @@ $window.Add_Closing({
         $script:HotkeyIds.Clear()
         $notifyIcon.Visible = $false
         $notifyIcon.Dispose()
+        $script:HaySpaceTrayIcon.Dispose()
         $trayMenu.Dispose()
         Write-HaySpaceLog -Message 'HaySpace notification area resources released.'
     }

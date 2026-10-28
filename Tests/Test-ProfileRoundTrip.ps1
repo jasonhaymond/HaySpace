@@ -53,6 +53,36 @@ try {
     if (-not $windowDetection.BackgroundOnly -or -not $windowDetection.VisibleWindow -or -not $windowDetection.OtherProcess) {
         throw 'Browser window detection did not distinguish visible windows from background processes.'
     }
+    $teamsDetection = & (Get-Module Workspace) {
+        param($installedApps)
+        [pscustomobject]@{
+            RunningProcessDetectedWithoutWindow = Test-HaySpaceApplicationProcessRunning -ProcessName (Get-Process -Id $PID).ProcessName
+            MissingProcessDetected = Test-HaySpaceApplicationProcessRunning -ProcessName ('HaySpaceMissing-' + [guid]::NewGuid().ToString('N'))
+            AppUserModelId = Resolve-HaySpaceApplicationUserModelId -ProcessName 'ms-teams' -InstalledApps $installedApps
+        }
+    } @(
+        [pscustomobject]@{ Name = 'Microsoft Teams'; AppID = 'MSTeams_8wekyb3d8bbwe!MSTeams' }
+        [pscustomobject]@{ Name = 'Microsoft Teams'; AppID = 'MicrosoftTeams_legacy!Teams' }
+    )
+    if (-not $teamsDetection.RunningProcessDetectedWithoutWindow -or $teamsDetection.MissingProcessDetected -or
+        $teamsDetection.AppUserModelId -ne 'MSTeams_8wekyb3d8bbwe!MSTeams') {
+        throw 'Teams tray-process detection or installed-app identity resolution failed.'
+    }
+
+    $unlaunchedWindowProfile = [pscustomobject]@{
+        ProfileName = 'Unlaunched window timing regression'
+        ProfileType = 'Workspace Layout'
+        BrowserMode = 'Ignore'
+        Applications = @([pscustomobject]@{ ProcessName = 'HaySpaceMissingApp'; Launch = $false })
+        Windows = @([pscustomobject]@{ ProcessName = 'HaySpaceMissingApp'; Title = 'Unlaunched HaySpace test window'; ProcessPath = '' })
+    }
+    $restoreTimer = [Diagnostics.Stopwatch]::StartNew()
+    $unlaunchedRestore = Restore-HaySpaceWorkspace -Profile $unlaunchedWindowProfile -LaunchApplications
+    $restoreTimer.Stop()
+    if ($unlaunchedRestore.PositionedWindows -ne 0 -or $restoreTimer.Elapsed.TotalSeconds -ge 5) {
+        throw "Restore waited $([math]::Round($restoreTimer.Elapsed.TotalSeconds, 2)) seconds for an application HaySpace did not launch."
+    }
+
     $assignmentDisplays = @(
         [pscustomobject]@{ DisplayName = 'HaySpace test display ' + [guid]::NewGuid().ToString('N'); DeviceName = '\\.\DISPLAY_TEST'; X = 0; Y = 0; Width = 1280; Height = 720; Primary = $true }
     )
@@ -75,6 +105,10 @@ try {
         $guiRestartCommand -match '-Tray|-AutoLoadProfile' -or
         $trayRestartCommand -notmatch [regex]::Escape((Join-Path $root 'HaySpace.ps1'))) {
         throw 'Restart commands did not preserve the tray mode without repeating automatic profile loading.'
+    }
+    $launcherContents = Get-Content -LiteralPath (Join-Path $root 'Start-HaySpace.cmd') -Raw
+    if ($launcherContents -notmatch '(?s)if.*?start "" powershell\.exe.*?-WindowStyle Hidden.*?else.*?start "" powershell\.exe.*?-WindowStyle Hidden') {
+        throw 'The command launcher must start both normal and argument-bearing HaySpace instances hidden and detached.'
     }
     Save-HaySpaceProfile -Profile $profile | Out-Null
     $loaded = Get-HaySpaceProfiles | Where-Object ProfileName -eq $name | Select-Object -First 1
