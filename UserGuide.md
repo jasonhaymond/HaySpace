@@ -32,7 +32,7 @@ Use **Create HaySpace desktop shortcut** or **Add HaySpace to taskbar** to launc
 
 ## Manage displays
 
-Open the **Displays** tab and select **Refresh** to enumerate currently connected screens. Select a screen and choose **Rename selected** or **Test selected**. Names are saved locally and used to match displays when restoring. Use **Migration assistant** on a profile to map its saved displays to this computer and update unavailable application or Explorer folder paths.
+Open the **Displays** tab and select **Refresh** to enumerate currently connected screens. Select a screen and choose **Rename selected** or **Test selected**. Names are saved locally and used to match displays when restoring. In a profile's **Migration assistant**, use **Identify** beside a display mapping to show its name, resolution, and Windows device name on that monitor before choosing it. The assistant can also update unavailable application or Explorer folder paths.
 
 If a profile's display is missing, HaySpace falls back to the primary display and keeps the window within the display's usable work area.
 

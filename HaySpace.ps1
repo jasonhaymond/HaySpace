@@ -73,6 +73,43 @@ function Refresh-Displays {
     $script:DisplayList.ItemsSource = @(Get-HaySpaceDisplays)
 }
 
+function Show-HaySpaceDisplayIdentification {
+    param([Parameter(Mandatory)]$Display, [int]$DurationMilliseconds = 1400)
+    $screen = [System.Windows.Forms.Screen]::AllScreens | Where-Object DeviceName -eq $Display.DeviceName | Select-Object -First 1
+    if (-not $screen) { throw "Display '$($Display.DisplayName)' is no longer connected." }
+
+    $overlay = New-Object System.Windows.Forms.Form
+    $overlay.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+    $overlay.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+    $overlay.Bounds = $screen.Bounds
+    $overlay.TopMost = $true
+    $overlay.BackColor = [System.Drawing.Color]::FromArgb(35, 92, 232)
+    $label = New-Object System.Windows.Forms.Label
+    $label.Dock = [System.Windows.Forms.DockStyle]::Fill
+    $label.Text = "{0}`n{1} x {2}`n{3}" -f $Display.DisplayName, $Display.Width, $Display.Height, $Display.DeviceName
+    $label.ForeColor = [System.Drawing.Color]::White
+    $label.Font = New-Object System.Drawing.Font('Segoe UI', 28, [System.Drawing.FontStyle]::Bold)
+    $label.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
+    $overlay.Controls.Add($label)
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = [math]::Max(500, $DurationMilliseconds)
+    $overlayToClose = $overlay
+    $timer.Add_Tick({
+        param($sender, $eventArgs)
+        $sender.Stop()
+        $overlayToClose.Close()
+    }.GetNewClosure())
+    try {
+        $timer.Start()
+        $null = $overlay.ShowDialog()
+    }
+    finally {
+        $timer.Stop()
+        $timer.Dispose()
+        $overlay.Dispose()
+    }
+}
+
 function Show-StartupProfileChooser {
     param([Parameter(Mandatory)][object[]]$Profiles, [Parameter(Mandatory)][string]$DisplaySummary)
     $dialog = New-Object System.Windows.Window
@@ -274,8 +311,29 @@ function Show-MigrationAssistant {
             if ($existing) { $existingDevice = $existing.DeviceName }
         }
         $combo.SelectedItem = $currentDisplays | Where-Object DeviceName -eq $existingDevice | Select-Object -First 1
+        $identify = New-Object Windows.Controls.Button
+        $identify.Content = 'Identify'
+        $identify.Width = 76
+        $identify.Margin = '4,0,0,0'
+        $identify.Tag = $combo
+        [Windows.Controls.DockPanel]::SetDock($identify, [Windows.Controls.Dock]::Right)
+        $identify.Add_Click({
+            param($sender, $eventArgs)
+            $selectedDisplay = $sender.Tag.SelectedItem
+            if (-not $selectedDisplay) {
+                [System.Windows.MessageBox]::Show('Select a connected display to identify.', 'Migration assistant') | Out-Null
+                return
+            }
+            try {
+                Show-HaySpaceDisplayIdentification -Display $selectedDisplay
+            }
+            catch {
+                [System.Windows.MessageBox]::Show($_.Exception.Message, 'Unable to identify display', 'OK', 'Error') | Out-Null
+            }
+        })
         [Windows.Controls.DockPanel]::SetDock($label, [Windows.Controls.Dock]::Left)
         $row.Children.Add($label) | Out-Null
+        $row.Children.Add($identify) | Out-Null
         $row.Children.Add($combo) | Out-Null
         $content.Children.Add($row) | Out-Null
         $mappingRows += [pscustomobject]@{ Name = [string]$expected; Control = $combo }
@@ -1343,28 +1401,7 @@ $window.FindName('TestDisplayButton').Add_Click({
     $display = $script:DisplayList.SelectedItem
     if (-not $display) { return }
     try {
-        $screen = [System.Windows.Forms.Screen]::AllScreens | Where-Object DeviceName -eq $display.DeviceName | Select-Object -First 1
-        if (-not $screen) { throw 'The selected display is no longer connected.' }
-        $overlay = New-Object System.Windows.Forms.Form
-        $overlay.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
-        $overlay.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
-        $overlay.Bounds = $screen.Bounds
-        $overlay.TopMost = $true
-        $overlay.BackColor = [System.Drawing.Color]::FromArgb(35, 92, 232)
-        $label = New-Object System.Windows.Forms.Label
-        $label.Dock = [System.Windows.Forms.DockStyle]::Fill
-        $label.Text = $display.DisplayName
-        $label.ForeColor = [System.Drawing.Color]::White
-        $label.Font = New-Object System.Drawing.Font('Segoe UI', 28, [System.Drawing.FontStyle]::Bold)
-        $label.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
-        $overlay.Controls.Add($label)
-        $timer = New-Object System.Windows.Forms.Timer
-        $timer.Interval = 900
-        $timer.Add_Tick({ $timer.Stop(); $overlay.Close() })
-        $timer.Start()
-        $null = $overlay.ShowDialog()
-        $timer.Dispose()
-        $overlay.Dispose()
+        Show-HaySpaceDisplayIdentification -Display $display
         Set-Status "Display test complete: $($display.DisplayName)."
     }
     catch {
