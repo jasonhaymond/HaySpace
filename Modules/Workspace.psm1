@@ -1,0 +1,469 @@
+Set-StrictMode -Version Latest
+
+if (-not ('HaySpace.NativeWindow' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+using System.Diagnostics;
+
+namespace HaySpace {
+    public class WindowInfo {
+        public IntPtr Handle;
+        public string Title;
+        public int ProcessId;
+        public string ProcessName;
+        public string ProcessPath;
+        public int X;
+        public int Y;
+        public int Width;
+        public int Height;
+        public bool Maximized;
+        public bool Minimized;
+    }
+
+    public static class NativeWindow {
+        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+        [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+        [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
+        [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+        [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out int processId);
+        [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+        [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
+        [DllImport("user32.dll")] private static extern bool IsZoomed(IntPtr hWnd);
+        [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int command);
+        [DllImport("user32.dll", SetLastError=true)] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
+        [DllImport("user32.dll", SetLastError=true)] public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint virtualKey);
+        [DllImport("user32.dll", SetLastError=true)] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+        private const uint SWP_NOZORDER = 0x0004;
+        private const uint SWP_NOACTIVATE = 0x0010;
+
+        public static WindowInfo[] GetWindows() {
+            var result = new System.Collections.Generic.List<WindowInfo>();
+            EnumWindows(delegate(IntPtr hWnd, IntPtr ignored) {
+                if (!IsWindowVisible(hWnd)) return true;
+                var text = new StringBuilder(1024);
+                GetWindowText(hWnd, text, text.Capacity);
+                if (text.Length == 0) return true;
+                int pid;
+                GetWindowThreadProcessId(hWnd, out pid);
+                try {
+                    var process = Process.GetProcessById(pid);
+                    RECT rect;
+                    if (!GetWindowRect(hWnd, out rect)) return true;
+                    result.Add(new WindowInfo {
+                        Handle = hWnd,
+                        Title = text.ToString(),
+                        ProcessId = pid,
+                        ProcessName = process.ProcessName,
+                        ProcessPath = process.MainModule.FileName,
+                        X = rect.Left,
+                        Y = rect.Top,
+                        Width = Math.Max(0, rect.Right - rect.Left),
+                        Height = Math.Max(0, rect.Bottom - rect.Top),
+                        Maximized = IsZoomed(hWnd),
+                        Minimized = IsIconic(hWnd)
+                    });
+                } catch { }
+                return true;
+            }, IntPtr.Zero);
+            return result.ToArray();
+        }
+
+        public static bool Move(IntPtr handle, int x, int y, int width, int height, int state) {
+            ShowWindow(handle, 9);
+            if (!SetWindowPos(handle, IntPtr.Zero, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE)) return false;
+            if (state == 1) ShowWindow(handle, 3);
+            else if (state == 2) ShowWindow(handle, 2);
+            return true;
+        }
+    }
+}
+'@
+}
+
+function Get-HaySpaceDisplays {
+    Add-Type -AssemblyName System.Windows.Forms
+    $settings = Get-HaySpaceSettings
+    $screens = [System.Windows.Forms.Screen]::AllScreens
+    $result = @()
+    foreach ($screen in $screens) {
+        $friendlyName = $screen.DeviceName
+        if ($settings.DisplayNames -and $settings.DisplayNames.ContainsKey($screen.DeviceName)) {
+            $friendlyName = [string]$settings.DisplayNames[$screen.DeviceName]
+        }
+        $result += [pscustomobject]@{
+            DeviceName = $screen.DeviceName
+            DisplayName = $friendlyName
+            Primary = $screen.Primary
+            X = $screen.Bounds.X
+            Y = $screen.Bounds.Y
+            Width = $screen.Bounds.Width
+            Height = $screen.Bounds.Height
+            WorkX = $screen.WorkingArea.X
+            WorkY = $screen.WorkingArea.Y
+            WorkWidth = $screen.WorkingArea.Width
+            WorkHeight = $screen.WorkingArea.Height
+        }
+    }
+    return $result
+}
+
+function Get-HaySpaceExplorerFolders {
+    $folders = @{}
+    $shell = $null
+    try {
+        $shell = New-Object -ComObject Shell.Application
+        foreach ($item in $shell.Windows()) {
+            try {
+                $path = [uri]::UnescapeDataString(([uri]$item.LocationURL).LocalPath)
+                if (-not (Test-Path -LiteralPath $path -PathType Container)) { continue }
+                $handle = [int64]$item.HWND
+                $folders[$handle.ToString()] = [IO.Path]::GetFullPath($path)
+            }
+            catch {
+                Write-HaySpaceLog -Level Debug -Message "Skipped an Explorer window without a local folder path: $($_.Exception.Message)"
+            }
+        }
+    }
+    catch {
+        Write-HaySpaceLog -Level Warning -Message "Could not enumerate Explorer folder windows: $($_.Exception.Message)"
+    }
+    return $folders
+}
+
+function Get-HaySpaceBrowserUrl {
+    param([Parameter(Mandatory)][IntPtr]$WindowHandle)
+    try {
+        Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+        $element = [System.Windows.Automation.AutomationElement]::FromHandle($WindowHandle)
+        if (-not $element) { return $null }
+        $descendants = $element.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.Condition]::TrueCondition
+        )
+        foreach ($candidate in $descendants) {
+            $automationId = [string]$candidate.Current.AutomationId
+            $name = [string]$candidate.Current.Name
+            if ($automationId -notmatch '(?i)(address|omnibox|urlbar)' -and $name -notmatch '(?i)(address and search|search or enter address|url bar)') { continue }
+            $pattern = $null
+            if (-not $candidate.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) { continue }
+            $value = [string]$pattern.Current.Value
+            if ([string]::IsNullOrWhiteSpace($value)) { continue }
+            if ($value -notmatch '^[a-z][a-z0-9+.-]*://') { $value = 'https://' + $value }
+            $uri = $null
+            if ([uri]::TryCreate($value, [UriKind]::Absolute, [ref]$uri) -and $uri.Scheme -in @('http', 'https') -and $uri.Host) {
+                return $uri.AbsoluteUri
+            }
+        }
+    }
+    catch {
+        Write-HaySpaceLog -Level Debug -Message "Could not read the active browser URL: $($_.Exception.Message)"
+    }
+    return $null
+}
+
+function Set-HaySpaceDisplayName {
+    param([Parameter(Mandatory)][string]$DeviceName, [Parameter(Mandatory)][string]$DisplayName)
+    $settings = Get-HaySpaceSettings
+    if (-not $settings.DisplayNames) {
+        $settings | Add-Member -NotePropertyName DisplayNames -NotePropertyValue @{} -Force
+    }
+    $settings.DisplayNames[$DeviceName] = $DisplayName.Trim()
+    Save-HaySpaceSettings $settings
+}
+
+function Get-HaySpaceWindowState {
+    param($Window)
+    if ($Window.Minimized) { return 'Minimized' }
+    if ($Window.Maximized) { return 'Maximized' }
+    return 'Normal'
+}
+
+function Get-HaySpaceWindowDisplay {
+    param($Window, [array]$Displays)
+    $centerX = [int]($Window.X + ($Window.Width / 2))
+    $centerY = [int]($Window.Y + ($Window.Height / 2))
+    foreach ($display in $Displays) {
+        if ($centerX -ge $display.X -and $centerX -lt ($display.X + $display.Width) -and $centerY -ge $display.Y -and $centerY -lt ($display.Y + $display.Height)) {
+            return $display
+        }
+    }
+    return ($Displays | Where-Object Primary | Select-Object -First 1)
+}
+
+function New-HaySpaceCapture {
+    param(
+        [Parameter(Mandatory)][string]$ProfileName,
+        [ValidateSet('Quick Layout', 'Workspace Layout', 'Full Workspace')][string]$ProfileType = 'Full Workspace',
+        [string[]]$ExcludedProcessNames = @(),
+        [switch]$ExcludeBrowsers,
+        [switch]$ExcludeExplorer
+    )
+    $displays = @(Get-HaySpaceDisplays)
+    $browserNames = @('msedge', 'chrome', 'firefox')
+    $explorerFoldersByHandle = Get-HaySpaceExplorerFolders
+    $windows = @()
+    $applications = @()
+    $explorerFolders = @()
+    $urls = @()
+    foreach ($window in [HaySpace.NativeWindow]::GetWindows()) {
+        if ($ExcludedProcessNames -contains $window.ProcessName) { continue }
+        if ($ExcludeBrowsers -and $browserNames -contains $window.ProcessName) { continue }
+        if ($ExcludeExplorer -and $window.ProcessName -eq 'explorer') { continue }
+        if ($window.Width -lt 100 -or $window.Height -lt 60) { continue }
+        $display = Get-HaySpaceWindowDisplay -Window $window -Displays $displays
+        if (-not $display) { continue }
+        $state = Get-HaySpaceWindowState $window
+        if ($browserNames -contains $window.ProcessName) {
+            $activeUrl = Get-HaySpaceBrowserUrl -WindowHandle $window.Handle
+            if ($activeUrl -and $urls -notcontains $activeUrl) {
+                $urls += $activeUrl
+            }
+        }
+        $folderPath = $null
+        $handleKey = $window.Handle.ToInt64().ToString()
+        if ($window.ProcessName -eq 'explorer' -and $explorerFoldersByHandle.ContainsKey($handleKey)) {
+            $folderPath = $explorerFoldersByHandle[$handleKey]
+            $explorerFolders += [pscustomobject]@{
+                Path = $folderPath
+                Title = $window.Title
+                DisplayName = $display.DisplayName
+                DeviceName = $display.DeviceName
+                X = $window.X
+                Y = $window.Y
+                Width = $window.Width
+                Height = $window.Height
+                RelativeX = [math]::Round(($window.X - $display.WorkX) / [double]$display.WorkWidth, 5)
+                RelativeY = [math]::Round(($window.Y - $display.WorkY) / [double]$display.WorkHeight, 5)
+                RelativeWidth = [math]::Round($window.Width / [double]$display.WorkWidth, 5)
+                RelativeHeight = [math]::Round($window.Height / [double]$display.WorkHeight, 5)
+                State = $state
+            }
+        }
+        $windows += [pscustomobject]@{
+            Title = $window.Title
+            ProcessName = $window.ProcessName
+            ProcessPath = $window.ProcessPath
+            DisplayName = $display.DisplayName
+            DeviceName = $display.DeviceName
+            X = $window.X
+            Y = $window.Y
+            Width = $window.Width
+            Height = $window.Height
+            RelativeX = [math]::Round(($window.X - $display.WorkX) / [double]$display.WorkWidth, 5)
+            RelativeY = [math]::Round(($window.Y - $display.WorkY) / [double]$display.WorkHeight, 5)
+            RelativeWidth = [math]::Round($window.Width / [double]$display.WorkWidth, 5)
+            RelativeHeight = [math]::Round($window.Height / [double]$display.WorkHeight, 5)
+            State = $state
+            FolderPath = $folderPath
+        }
+        if ($ProfileType -ne 'Quick Layout' -and -not ($applications | Where-Object { $_.ProcessPath -eq $window.ProcessPath })) {
+            $applications += [pscustomobject]@{
+                ProcessName = $window.ProcessName
+                ProcessPath = $window.ProcessPath
+                Arguments = ''
+                Launch = $true
+                LaunchOrder = $applications.Count
+            }
+        }
+    }
+
+    $browserMode = 'Ignore'
+    if ($ProfileType -eq 'Quick Layout') {
+        $applications = @()
+    }
+    return [pscustomobject]@{
+        ProfileName = $ProfileName.Trim()
+        ProfileType = $ProfileType
+        Version = '1.0'
+        CreatedAt = (Get-Date).ToString('o')
+        UpdatedAt = (Get-Date).ToString('o')
+        ComputerName = $env:COMPUTERNAME
+        BrowserMode = $browserMode
+        Applications = @($applications)
+        Windows = @($windows)
+        Urls = @($urls)
+        ExplorerFolders = @($explorerFolders)
+        RdpFiles = @()
+        Hotkey = ''
+        Displays = @($displays)
+        LaunchDelaySeconds = 2
+    }
+}
+
+function Get-HaySpaceBrowserPath {
+    param([string]$ProcessName)
+    $candidates = switch ($ProcessName) {
+        'msedge' { @("$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") }
+        'chrome' { @("$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "$env:ProgramFiles(x86)\Google\Chrome\Application\chrome.exe", "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe") }
+        'firefox' { @("$env:ProgramFiles\Mozilla Firefox\firefox.exe", "$env:ProgramFiles(x86)\Mozilla Firefox\firefox.exe") }
+    }
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) { return $candidate }
+    }
+    return $null
+}
+
+function Restore-HaySpaceWorkspace {
+    param([Parameter(Mandatory)]$Profile, [switch]$LaunchApplications)
+    $displays = @(Get-HaySpaceDisplays)
+    if ($displays.Count -eq 0) { throw 'No displays are currently available.' }
+    $profileType = if ($Profile.PSObject.Properties['ProfileType']) { [string]$Profile.ProfileType } else { 'Full Workspace' }
+    $profileApplications = @(if ($Profile.PSObject.Properties['Applications']) { $Profile.Applications })
+    $profileExplorerFolders = @(if ($Profile.PSObject.Properties['ExplorerFolders']) { $Profile.ExplorerFolders })
+    $profileRdpFiles = @(if ($Profile.PSObject.Properties['RdpFiles']) { $Profile.RdpFiles })
+    $profileWindows = @(if ($Profile.PSObject.Properties['Windows']) { $Profile.Windows })
+    $browserMode = if ($Profile.PSObject.Properties['BrowserMode']) { [string]$Profile.BrowserMode } else { 'Ignore' }
+    $launches = @()
+    if ($LaunchApplications) {
+        foreach ($folder in $profileExplorerFolders) {
+            if (-not $folder.Path -or -not (Test-Path -LiteralPath $folder.Path -PathType Container)) {
+                Write-HaySpaceLog -Level Warning -Message "Explorer folder is unavailable: '$($folder.Path)'."
+                continue
+            }
+            try {
+                Start-Process -FilePath 'explorer.exe' -ArgumentList "`"$($folder.Path)`"" | Out-Null
+                Start-Sleep -Milliseconds 150
+            }
+            catch {
+                Write-HaySpaceLog -Level Warning -Message "Could not open Explorer folder '$($folder.Path)': $($_.Exception.Message)"
+            }
+        }
+        foreach ($rdpFile in $profileRdpFiles) {
+            if (-not $rdpFile -or -not (Test-Path -LiteralPath $rdpFile -PathType Leaf)) {
+                Write-HaySpaceLog -Level Warning -Message "RDP file is unavailable: '$rdpFile'."
+                continue
+            }
+            try {
+                Start-Process -FilePath 'mstsc.exe' -ArgumentList "`"$rdpFile`"" | Out-Null
+                Start-Sleep -Milliseconds 200
+            }
+            catch {
+                Write-HaySpaceLog -Level Warning -Message "Could not open RDP file '$rdpFile': $($_.Exception.Message)"
+            }
+        }
+    }
+    if ($LaunchApplications -and $profileType -ne 'Quick Layout') {
+        foreach ($app in @($profileApplications | Sort-Object LaunchOrder)) {
+            if ($app.PSObject.Properties['Launch'] -and -not $app.Launch) { continue }
+            $processName = if ($app.PSObject.Properties['ProcessName']) { [string]$app.ProcessName } else { '' }
+            $processPath = if ($app.PSObject.Properties['ProcessPath']) { [string]$app.ProcessPath } else { '' }
+            $alreadyRunning = if ($processName) { Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($processName)) -ErrorAction SilentlyContinue | Select-Object -First 1 } else { $null }
+            $isSessionBrowser = $browserMode -eq 'Session' -and $processName -in @('msedge', 'chrome', 'firefox')
+            if ((-not $alreadyRunning -or $isSessionBrowser) -and $processPath -and (Test-Path -LiteralPath $processPath)) {
+                try {
+                    $arguments = if ($app.PSObject.Properties['Arguments']) { [string]$app.Arguments } else { '' }
+                    if ($browserMode -eq 'Session' -and $processName -in @('msedge', 'chrome', 'firefox')) {
+                        $sessionArgument = if ($processName -eq 'firefox') { '-restore' } else { '--restore-last-session' }
+                        if ($arguments) { $arguments += ' ' + $sessionArgument } else { $arguments = $sessionArgument }
+                    }
+                    if ([string]::IsNullOrWhiteSpace($arguments)) {
+                        $process = Start-Process -FilePath $processPath -PassThru
+                    }
+                    else {
+                        $process = Start-Process -FilePath $processPath -ArgumentList $arguments -PassThru
+                    }
+                    $launches += [pscustomobject]@{ ProcessName = $processName; ProcessId = $process.Id; StartedAt = Get-Date }
+                    Start-Sleep -Milliseconds 250
+                }
+                catch {
+                    Write-HaySpaceLog -Level Warning -Message "Could not launch '$processPath': $($_.Exception.Message)"
+                }
+            }
+            elseif (-not $alreadyRunning -and $processPath) {
+                Write-HaySpaceLog -Level Warning -Message "Application executable is unavailable: '$processPath'."
+            }
+        }
+    }
+
+    $profileUrls = @(if ($Profile.PSObject.Properties['Urls']) { $Profile.Urls })
+    $shouldOpenUrls = $browserMode -eq 'URL'
+    if ($browserMode -eq 'Hybrid') {
+        $browserProcesses = @(Get-Process -Name @('msedge', 'chrome', 'firefox') -ErrorAction SilentlyContinue)
+        $shouldOpenUrls = $browserProcesses.Count -eq 0
+    }
+    if ($shouldOpenUrls) {
+        foreach ($url in $profileUrls) {
+            if ([string]::IsNullOrWhiteSpace([string]$url)) { continue }
+            $parsedUrl = $null
+            if ([uri]::TryCreate([string]$url, [UriKind]::Absolute, [ref]$parsedUrl) -and $parsedUrl.Scheme -in @('http', 'https')) {
+                Start-Process -FilePath $parsedUrl.AbsoluteUri
+            }
+            else {
+                Write-HaySpaceLog -Level Warning -Message "Skipped a non-HTTP(S) profile URL in '$($Profile.ProfileName)'."
+            }
+        }
+    }
+
+    $deadline = (Get-Date).AddSeconds(15)
+    $moved = 0
+    $requestedCount = $profileWindows.Count
+    $placedTargets = @{}
+    $settings = Get-HaySpaceSettings
+    do {
+        $currentWindows = [HaySpace.NativeWindow]::GetWindows()
+        $usedHandles = @{}
+        $targetIndex = 0
+        foreach ($target in $profileWindows) {
+            $targetKey = $targetIndex.ToString()
+            $targetIndex++
+            if ($placedTargets.ContainsKey($targetKey)) { continue }
+            $eligible = @($currentWindows | Where-Object { $_.Width -gt 0 -and $_.Height -gt 0 -and -not $usedHandles.ContainsKey($_.Handle.ToInt64().ToString()) })
+            $candidate = $eligible | Where-Object { $_.ProcessName -eq $target.ProcessName -and $_.Title -eq $target.Title } | Select-Object -First 1
+            if (-not $candidate) {
+                $candidate = $eligible | Where-Object { $_.ProcessName -eq $target.ProcessName } | Select-Object -First 1
+            }
+            if (-not $candidate -and $target.Title) {
+                $candidate = $eligible | Where-Object { $_.Title -eq $target.Title } | Select-Object -First 1
+            }
+            if (-not $candidate -and $target.ProcessPath) {
+                $candidate = $eligible |
+                    Where-Object { $_.ProcessPath -eq $target.ProcessPath } |
+                    Select-Object -First 1
+            }
+            if (-not $candidate) { continue }
+            $usedHandles[$candidate.Handle.ToInt64().ToString()] = $true
+
+            $mappedDeviceName = $null
+            if ($settings.DisplayMappings -and $target.DisplayName -and $settings.DisplayMappings.ContainsKey([string]$target.DisplayName)) {
+                $mappedDeviceName = [string]$settings.DisplayMappings[[string]$target.DisplayName]
+            }
+            $display = $displays | Where-Object { $_.DeviceName -eq $mappedDeviceName } | Select-Object -First 1
+            if (-not $display) {
+                $display = $displays | Where-Object { $_.DisplayName -eq $target.DisplayName } | Select-Object -First 1
+            }
+            if (-not $display) {
+                $display = $displays | Where-Object { $_.DeviceName -eq $target.DeviceName } | Select-Object -First 1
+            }
+            if (-not $display) { $display = $displays | Where-Object Primary | Select-Object -First 1 }
+            if (-not $display) { $display = $displays[0] }
+
+            $workWidth = [math]::Max(1, $display.WorkWidth)
+            $workHeight = [math]::Max(1, $display.WorkHeight)
+            $relativeX = if ($target.PSObject.Properties['RelativeX'] -and $null -ne $target.RelativeX) { [double]$target.RelativeX } else { ([double]$target.X - $display.WorkX) / $workWidth }
+            $relativeY = if ($target.PSObject.Properties['RelativeY'] -and $null -ne $target.RelativeY) { [double]$target.RelativeY } else { ([double]$target.Y - $display.WorkY) / $workHeight }
+            $relativeWidth = if ($target.PSObject.Properties['RelativeWidth'] -and $null -ne $target.RelativeWidth) { [double]$target.RelativeWidth } else { [double]$target.Width / $workWidth }
+            $relativeHeight = if ($target.PSObject.Properties['RelativeHeight'] -and $null -ne $target.RelativeHeight) { [double]$target.RelativeHeight } else { [double]$target.Height / $workHeight }
+            $width = [math]::Min($workWidth, [math]::Max(240, [int]($relativeWidth * $workWidth)))
+            $height = [math]::Min($workHeight, [math]::Max(160, [int]($relativeHeight * $workHeight)))
+            $x = [int]($display.WorkX + ($relativeX * $workWidth))
+            $y = [int]($display.WorkY + ($relativeY * $workHeight))
+            $x = [math]::Max($display.WorkX, [math]::Min($x, $display.WorkX + $workWidth - $width))
+            $y = [math]::Max($display.WorkY, [math]::Min($y, $display.WorkY + $workHeight - $height))
+            $state = switch ([string]$target.State) { 'Maximized' { 1 } 'Minimized' { 2 } default { 0 } }
+            if ([HaySpace.NativeWindow]::Move($candidate.Handle, $x, $y, $width, $height, $state)) {
+                $placedTargets[$targetKey] = $true
+                $moved++
+            }
+        }
+        if ($moved -ge $requestedCount -or (Get-Date) -ge $deadline) { break }
+        Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $deadline)
+    Write-HaySpaceLog -Message "Restored profile '$($Profile.ProfileName)': positioned $moved window(s)."
+    return [pscustomobject]@{ PositionedWindows = $moved; RequestedWindows = $requestedCount; LaunchedApplications = $launches.Count; RestoredExplorerFolders = $profileExplorerFolders.Count }
+}
+
+Export-ModuleMember -Function Get-HaySpaceDisplays, Get-HaySpaceExplorerFolders, Get-HaySpaceBrowserUrl, Set-HaySpaceDisplayName, New-HaySpaceCapture, Restore-HaySpaceWorkspace, Get-HaySpaceBrowserPath

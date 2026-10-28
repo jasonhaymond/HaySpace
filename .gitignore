@@ -1,0 +1,21 @@
+# HaySpace runtime data is local to this computer and must never be published.
+/Profiles/
+/Settings/
+/Logs/
+/Backups/
+/Shortcuts/
+
+# Personal workspace configuration and connection material.
+*.rdp
+*.lnk
+*.log
+*.bak
+*.tmp
+*.temp
+
+# Local editor and operating-system files.
+.vscode/
+.vs/
+.idea/
+Thumbs.db
+Desktop.ini
