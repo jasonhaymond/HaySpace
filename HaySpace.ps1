@@ -56,6 +56,18 @@ function Set-Status([string]$Text) {
     $script:StatusText.Text = $Text
 }
 
+function Minimize-HaySpaceToTray {
+    $window.ShowInTaskbar = $false
+    $window.WindowState = 'Minimized'
+}
+
+function Show-HaySpaceDashboard {
+    $window.ShowInTaskbar = $true
+    $window.Show()
+    $window.WindowState = 'Normal'
+    $window.Activate()
+}
+
 function Refresh-Profiles {
     $selectedName = if ($script:ProfileList.SelectedItem) { [string]$script:ProfileList.SelectedItem.ProfileName } else { $null }
     $script:ProfileList.ItemsSource = $null
@@ -1450,7 +1462,7 @@ $trayMenu = New-Object System.Windows.Forms.ContextMenuStrip
 $trayMenu.Add_Opening({
     $trayMenu.Items.Clear()
     $showItem = $trayMenu.Items.Add('Open HaySpace')
-    $showItem.Add_Click({ $window.Show(); $window.WindowState = 'Normal'; $window.Activate() })
+    $showItem.Add_Click({ Show-HaySpaceDashboard })
     $trayMenu.Items.Add('-') | Out-Null
     foreach ($trayProfile in @(Get-HaySpaceProfiles)) {
         $profileName = [string]$trayProfile.ProfileName
@@ -1479,12 +1491,12 @@ $trayMenu.Add_Opening({
 })
 $notifyIcon.ContextMenuStrip = $trayMenu
 $notifyIcon.Visible = $true
-$notifyIcon.Add_DoubleClick({ $window.Show(); $window.WindowState = 'Normal'; $window.Activate() })
+$notifyIcon.Add_DoubleClick({ Show-HaySpaceDashboard })
 $window.Add_Closing({
     param($sender, $eventArgs)
     if (-not $script:ExitRequested) {
         $eventArgs.Cancel = $true
-        $window.Hide()
+        Minimize-HaySpaceToTray
     }
     else {
         foreach ($id in @($script:HotkeyIds.Keys)) {
@@ -1527,11 +1539,11 @@ $window.Add_SourceInitialized({
     }
 })
 if ($Tray) {
-    $window.Add_ContentRendered({ $window.Hide() })
+    $window.Add_ContentRendered({ Minimize-HaySpaceToTray })
 }
 if ($AutoLoadProfile) {
     $window.Add_ContentRendered({
-        if ($Tray) { $window.Hide() }
+        if ($Tray) { Minimize-HaySpaceToTray }
         Invoke-AutoProfileStartup
     })
 }
