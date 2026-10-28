@@ -9,6 +9,7 @@ HaySpace is a portable Windows PowerShell 5.1 and WPF application.
 - `Modules/Storage.psm1`: settings, profile persistence, logs, backup import/export
 - `Modules/Workspace.psm1`: Windows interop, display discovery, Explorer window capture, and workspace restore
 - `Modules/Shortcuts.psm1`: generated profile shortcuts
+- `Modules/Startup.psm1`: per-user logon registration
 - `Profiles`, `Settings`, `Shortcuts`, `Backups`, and `Logs`: local data folders created on first run
 
 The native window APIs are declared in C# via `Add-Type` at runtime. No external packages or services are required.
@@ -31,7 +32,7 @@ Before sharing changes, parse-check all PowerShell files with `System.Management
 
 ## Data and safety
 
-Profile files are local JSON and may launch saved executable paths when a profile is loaded. Validate URLs as HTTP(S) and paths as local files before starting them. Keep backup import local and validate archives before copying data. HaySpace has no telemetry or network service.
+Profile files and remembered display-to-profile assignments are local JSON. Profiles may launch saved executable paths when loaded. Validate URLs as HTTP(S) and paths as local files before starting them. Keep backup import local and validate archives before copying data. HaySpace has no telemetry or network service.
 
 ## Current implementation boundaries
 

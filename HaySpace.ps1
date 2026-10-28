@@ -2,12 +2,14 @@
 param(
     [string]$LoadProfile,
     [switch]$Capture,
-    [switch]$Tray
+    [switch]$Tray,
+    [switch]$AutoLoadProfile
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-foreach ($module in @('Storage.psm1', 'Workspace.psm1', 'Shortcuts.psm1')) {
+$script:HaySpaceScriptPath = $PSCommandPath
+foreach ($module in @('Storage.psm1', 'Workspace.psm1', 'Shortcuts.psm1', 'Startup.psm1')) {
     Import-Module (Join-Path (Join-Path $root 'Modules') $module) -Force
 }
 $paths = Initialize-HaySpaceStorage
@@ -44,6 +46,7 @@ $script:ProfileSummary = $window.FindName('ProfileSummary')
 $script:StatusText = $window.FindName('StatusText')
 $script:DisplayList = $window.FindName('DisplayList')
 $script:SettingsRoot = $window.FindName('SettingsRoot')
+$script:RunAtLogonCheckBox = $window.FindName('RunAtLogonCheckBox')
 $script:ExitRequested = $false
 $script:HotkeyIds = @{}
 $script:HotkeySource = $null
@@ -68,6 +71,114 @@ function Refresh-Profiles {
 function Refresh-Displays {
     $script:DisplayList.ItemsSource = $null
     $script:DisplayList.ItemsSource = @(Get-HaySpaceDisplays)
+}
+
+function Show-StartupProfileChooser {
+    param([Parameter(Mandatory)][object[]]$Profiles, [Parameter(Mandatory)][string]$DisplaySummary)
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title = 'Choose workspace for connected displays'
+    $dialog.Width = 560
+    $dialog.Height = 430
+    $dialog.MinWidth = 460
+    $dialog.MinHeight = 340
+    $dialog.WindowStartupLocation = 'CenterScreen'
+    $dialog.ResizeMode = 'CanResize'
+    $layout = New-Object System.Windows.Controls.DockPanel
+    $layout.Margin = '18'
+    $description = New-Object System.Windows.Controls.TextBlock
+    $description.Text = "No exact saved display configuration matched. Choose a profile for this layout:`n$DisplaySummary"
+    $description.TextWrapping = 'Wrap'
+    $description.Margin = '0,0,0,12'
+    [System.Windows.Controls.DockPanel]::SetDock($description, 'Top')
+    $layout.Children.Add($description) | Out-Null
+    $buttons = New-Object System.Windows.Controls.StackPanel
+    $buttons.Orientation = 'Horizontal'
+    $buttons.HorizontalAlignment = 'Right'
+    $buttons.Margin = '0,12,0,0'
+    [System.Windows.Controls.DockPanel]::SetDock($buttons, 'Bottom')
+    $loadButton = New-Object System.Windows.Controls.Button
+    $loadButton.Content = 'Load selected'
+    $loadButton.IsDefault = $true
+    $loadButton.MinWidth = 100
+    $loadButton.Margin = '4'
+    $cancelButton = New-Object System.Windows.Controls.Button
+    $cancelButton.Content = 'Cancel'
+    $cancelButton.IsCancel = $true
+    $cancelButton.MinWidth = 80
+    $cancelButton.Margin = '4'
+    $buttons.Children.Add($loadButton) | Out-Null
+    $buttons.Children.Add($cancelButton) | Out-Null
+    $layout.Children.Add($buttons) | Out-Null
+    $list = New-Object System.Windows.Controls.ListBox
+    $list.DisplayMemberPath = 'ProfileName'
+    $list.ItemsSource = $Profiles
+    if ($Profiles.Count -gt 0) { $list.SelectedIndex = 0 }
+    $layout.Children.Add($list) | Out-Null
+    $loadButton.Add_Click({
+        if ($list.SelectedItem) { $dialog.DialogResult = $true }
+    }.GetNewClosure())
+    $dialog.Content = $layout
+    if ($dialog.ShowDialog()) { return $list.SelectedItem }
+    return $null
+}
+
+function Invoke-AutoProfileStartup {
+    try {
+        $displays = @(Get-HaySpaceDisplays)
+        if (-not $displays.Count) { throw 'No connected displays are available for automatic profile selection.' }
+        $profiles = @(Get-HaySpaceProfiles)
+        if (-not $profiles.Count) {
+            Set-Status 'No saved profiles are available for automatic loading.'
+            return
+        }
+        $configurationKey = Get-HaySpaceDisplayConfigurationKey -Displays $displays
+        $configurationSummary = (@($displays | Sort-Object DisplayName | ForEach-Object {
+            '{0}: {1}x{2} at ({3}, {4}){5}' -f $_.DisplayName, $_.Width, $_.Height, $_.X, $_.Y, $(if ($_.Primary) { ' [primary]' } else { '' })
+        }) -join "`n")
+        $settings = Get-HaySpaceSettings
+        $assignedName = if ($settings.DisplayProfileAssignments.ContainsKey($configurationKey)) { [string]$settings.DisplayProfileAssignments[$configurationKey] } else { '' }
+        $profile = $null
+        if ($assignedName) {
+            $profile = $profiles | Where-Object ProfileName -eq $assignedName | Select-Object -First 1
+            if (-not $profile) {
+                $settings.DisplayProfileAssignments.Remove($configurationKey)
+                Save-HaySpaceSettings $settings
+                Write-HaySpaceLog -Level Warning -Message "Remembered profile '$assignedName' for this display layout no longer exists."
+            }
+        }
+        if (-not $profile) {
+            $exactMatches = @()
+            foreach ($candidate in $profiles) {
+                if (-not $candidate.PSObject.Properties['Displays'] -or -not $candidate.Displays) { continue }
+                try {
+                    if ((Get-HaySpaceDisplayConfigurationKey -Displays @($candidate.Displays)) -eq $configurationKey) {
+                        $exactMatches += $candidate
+                    }
+                }
+                catch {
+                    Write-HaySpaceLog -Level Warning -Message "Could not compare saved displays for '$($candidate.ProfileName)': $($_.Exception.Message)"
+                }
+            }
+            if ($exactMatches.Count -eq 1) {
+                $profile = $exactMatches[0]
+            }
+            else {
+                $profile = Show-StartupProfileChooser -Profiles $profiles -DisplaySummary $configurationSummary
+            }
+        }
+        if (-not $profile) {
+            Set-Status 'Automatic profile loading was canceled.'
+            return
+        }
+        $settings.DisplayProfileAssignments[$configurationKey] = [string]$profile.ProfileName
+        Save-HaySpaceSettings $settings
+        $result = Restore-HaySpaceWorkspace -Profile $profile -LaunchApplications
+        Set-Status "Loaded '$($profile.ProfileName)' for this display configuration; positioned $($result.PositionedWindows) window(s)."
+    }
+    catch {
+        Write-HaySpaceLog -Level Error -Message "Automatic profile loading failed: $($_.Exception.Message)"
+        [System.Windows.MessageBox]::Show($_.Exception.Message, 'Automatic profile loading failed', 'OK', 'Error') | Out-Null
+    }
 }
 
 function Get-HaySpaceHotkeyVirtualKey {
@@ -199,6 +310,7 @@ function Show-MigrationAssistant {
                 $sender.Tag.Text = $picker.FileName
             }
         })
+
         $content.Children.Add($row) | Out-Null
         $pathRows += [pscustomobject]@{ Application = $application; Control = $pathBox }
     }
@@ -1005,6 +1117,23 @@ $script:ProfileList.Add_SelectionChanged({
     }
 })
 
+$script:RunAtLogonCheckBox.IsChecked = Test-HaySpaceRunAtLogon
+$script:RunAtLogonCheckBox.Add_Click({
+    try {
+        Set-HaySpaceRunAtLogon -Enabled ([bool]$script:RunAtLogonCheckBox.IsChecked) -ScriptPath $script:HaySpaceScriptPath
+        if ($script:RunAtLogonCheckBox.IsChecked) {
+            Set-Status 'HaySpace will start at user logon and select a workspace for the connected displays.'
+        }
+        else {
+            Set-Status 'HaySpace will no longer start automatically at user logon.'
+        }
+    }
+    catch {
+        $script:RunAtLogonCheckBox.IsChecked = Test-HaySpaceRunAtLogon
+        [System.Windows.MessageBox]::Show($_.Exception.Message, 'Unable to update logon startup', 'OK', 'Error') | Out-Null
+    }
+})
+
 $window.FindName('RefreshProfilesButton').Add_Click({
     try {
         Refresh-Profiles
@@ -1332,5 +1461,11 @@ $window.Add_SourceInitialized({
 })
 if ($Tray) {
     $window.Add_ContentRendered({ $window.Hide() })
+}
+if ($AutoLoadProfile) {
+    $window.Add_ContentRendered({
+        if ($Tray) { $window.Hide() }
+        Invoke-AutoProfileStartup
+    })
 }
 $null = $window.ShowDialog()

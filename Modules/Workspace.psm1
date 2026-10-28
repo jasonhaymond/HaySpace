@@ -111,6 +111,38 @@ function Get-HaySpaceDisplays {
     return $result
 }
 
+function Get-HaySpaceDisplayConfigurationKey {
+    param([Parameter(Mandatory)][object[]]$Displays)
+    if (-not $Displays.Count) { throw 'At least one display is required to identify a configuration.' }
+    $minimumX = [double](($Displays | Measure-Object -Property X -Minimum).Minimum)
+    $minimumY = [double](($Displays | Measure-Object -Property Y -Minimum).Minimum)
+    $configuration = @(
+        foreach ($display in $Displays) {
+            $displayName = if ($display.PSObject.Properties['DisplayName'] -and $display.DisplayName) { [string]$display.DisplayName } else { [string]$display.DeviceName }
+            if ([string]::IsNullOrWhiteSpace($displayName) -or [double]$display.Width -le 0 -or [double]$display.Height -le 0) {
+                throw 'Each display needs a name and positive dimensions to identify its configuration.'
+            }
+            [pscustomobject]@{
+                Name = $displayName
+                X = [int]([double]$display.X - $minimumX)
+                Y = [int]([double]$display.Y - $minimumY)
+                Width = [int]$display.Width
+                Height = [int]$display.Height
+                Primary = [bool]$display.Primary
+            }
+        }
+    )
+    $canonical = ConvertTo-Json -InputObject @($configuration | Sort-Object Name, X, Y, Width, Height) -Depth 4 -Compress
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes($canonical)
+        return ([BitConverter]::ToString($sha256.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
 function Get-HaySpaceExplorerFolders {
     $folders = @{}
     $shell = $null
@@ -466,4 +498,4 @@ function Restore-HaySpaceWorkspace {
     return [pscustomobject]@{ PositionedWindows = $moved; RequestedWindows = $requestedCount; LaunchedApplications = $launches.Count; RestoredExplorerFolders = $profileExplorerFolders.Count }
 }
 
-Export-ModuleMember -Function Get-HaySpaceDisplays, Get-HaySpaceExplorerFolders, Get-HaySpaceBrowserUrl, Set-HaySpaceDisplayName, New-HaySpaceCapture, Restore-HaySpaceWorkspace, Get-HaySpaceBrowserPath
+Export-ModuleMember -Function Get-HaySpaceDisplays, Get-HaySpaceDisplayConfigurationKey, Get-HaySpaceExplorerFolders, Get-HaySpaceBrowserUrl, Set-HaySpaceDisplayName, New-HaySpaceCapture, Restore-HaySpaceWorkspace, Get-HaySpaceBrowserPath

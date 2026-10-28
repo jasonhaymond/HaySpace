@@ -95,6 +95,7 @@
                     <StackPanel x:Name="SettingsRoot">
                         <TextBlock Text="Portable data" FontSize="16" FontWeight="SemiBold"/>
                         <TextBlock Text="Profiles, settings, backups, logs, and shortcuts are stored beside this application." Foreground="#667085" Margin="0,6,0,14"/>
+                        <CheckBox x:Name="RunAtLogonCheckBox" Content="Run at user logon and load a workspace for connected displays" Margin="4,4,4,12"/>
                         <Button x:Name="OpenDataFolderButton" Content="Open HaySpace folder" HorizontalAlignment="Left"/>
                     </StackPanel>
                 </Border>

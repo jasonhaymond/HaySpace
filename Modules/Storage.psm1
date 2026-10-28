@@ -34,6 +34,7 @@ function Initialize-HaySpaceStorage {
             Version = '1.0'
             DisplayNames = @{}
             DisplayMappings = @{}
+            DisplayProfileAssignments = @{}
             Hotkeys = @()
             StartMinimized = $false
         }
@@ -47,7 +48,7 @@ function Initialize-HaySpaceStorage {
 function Get-HaySpaceSettings {
     $path = Join-Path (Get-HaySpacePaths).Settings 'settings.json'
     if (-not (Test-Path -LiteralPath $path)) {
-        return [pscustomobject]@{ Version = '1.0'; DisplayNames = @{}; DisplayMappings = @{}; Hotkeys = @(); StartMinimized = $false }
+        return [pscustomobject]@{ Version = '1.0'; DisplayNames = @{}; DisplayMappings = @{}; DisplayProfileAssignments = @{}; Hotkeys = @(); StartMinimized = $false }
     }
 
     try {
@@ -58,7 +59,7 @@ function Get-HaySpaceSettings {
         throw
     }
 
-    foreach ($mappingName in @('DisplayNames', 'DisplayMappings')) {
+    foreach ($mappingName in @('DisplayNames', 'DisplayMappings', 'DisplayProfileAssignments')) {
         if (-not $settings.PSObject.Properties[$mappingName] -or -not $settings.$mappingName) {
             $settings | Add-Member -NotePropertyName $mappingName -NotePropertyValue @{} -Force
         }

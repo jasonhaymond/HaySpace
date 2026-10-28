@@ -21,7 +21,7 @@ Profiles are UTF-8 JSON files stored in `Profiles` and currently use schema vers
 
 Window state values are `Normal`, `Maximized`, and `Minimized`. Relative coordinates are normalized to the display work area and allow layouts to adapt to a different resolution. On display mismatch, HaySpace first uses a saved migration mapping, then the friendly name, then the saved Windows device name, then the primary display.
 
-Each Explorer folder entry stores `Path` and its saved window title, display, rectangle, relative work-area rectangle, and state. Each window entry may include `FolderPath`. Settings also store `DisplayMappings`, which map a saved friendly name to a current Windows display device name, and may be updated using the migration assistant.
+Each Explorer folder entry stores `Path` and its saved window title, display, rectangle, relative work-area rectangle, and state. Each window entry may include `FolderPath`. Local settings store `DisplayMappings`, which map a saved friendly name to a current Windows display device name, and `DisplayProfileAssignments`, which remembers a chosen profile for an exact connected-display layout. These settings may be updated by display migration or automatic profile selection.
 
 Example:
 
