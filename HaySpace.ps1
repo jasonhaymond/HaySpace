@@ -33,6 +33,20 @@ if ($Capture) {
     exit 0
 }
 
+$mutexName = 'Local\HaySpace-{0}' -f [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$script:HaySpaceInstanceMutex = [System.Threading.Mutex]::new($false, $mutexName)
+try {
+    $ownsInstanceMutex = $script:HaySpaceInstanceMutex.WaitOne(0)
+}
+catch [System.Threading.AbandonedMutexException] {
+    $ownsInstanceMutex = $true
+}
+if (-not $ownsInstanceMutex) {
+    Write-HaySpaceLog -Message 'HaySpace is already running for this user; ignoring the duplicate GUI launch.'
+    $script:HaySpaceInstanceMutex.Dispose()
+    exit 0
+}
+
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
 $xamlPath = Join-Path $root 'UI\MainWindow.xaml'
 [xml]$xaml = Get-Content -LiteralPath $xamlPath -Raw -Encoding UTF8
@@ -1520,8 +1534,11 @@ $window.Add_SourceInitialized({
     if ($script:HotkeySource) {
         $script:HotkeyHook = [Windows.Interop.HwndSourceHook]{
             param($handle, $message, $wParam, $lParam, [ref]$handled)
-            $hotkeyId = $wParam.ToInt32()
-            if ($message -eq 0x0312 -and $script:HotkeyIds.ContainsKey($hotkeyId)) {
+            if ($message -ne 0x0312) { return [IntPtr]::Zero }
+            $hotkeyIdValue = $wParam.ToInt64()
+            if ($hotkeyIdValue -lt [int]::MinValue -or $hotkeyIdValue -gt [int]::MaxValue) { return [IntPtr]::Zero }
+            $hotkeyId = [int]$hotkeyIdValue
+            if ($script:HotkeyIds.ContainsKey($hotkeyId)) {
                 $handled.Value = $true
                 $profileName = [string]$script:HotkeyIds[$hotkeyId]
                 $profile = Get-HaySpaceProfiles | Where-Object ProfileName -eq $profileName | Select-Object -First 1
@@ -1567,4 +1584,6 @@ catch {
 }
 finally {
     Write-HaySpaceLog -Message 'HaySpace dispatcher stopped.'
+    $script:HaySpaceInstanceMutex.ReleaseMutex()
+    $script:HaySpaceInstanceMutex.Dispose()
 }
