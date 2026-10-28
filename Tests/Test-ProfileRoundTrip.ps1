@@ -42,6 +42,17 @@ try {
     if ($displayKey -ne (Get-HaySpaceDisplayConfigurationKey -Displays $reorderedDisplayLayout) -or $displayKey -eq (Get-HaySpaceDisplayConfigurationKey -Displays $differentDisplayLayout)) {
         throw 'Display configuration identity was not stable or did not distinguish a resolution change.'
     }
+    $windowDetection = & (Get-Module Workspace) {
+        param($visibleWindow)
+        [pscustomobject]@{
+            BackgroundOnly = -not (Test-HaySpaceApplicationWindowOpen -Windows @() -ProcessName 'msedge')
+            VisibleWindow = Test-HaySpaceApplicationWindowOpen -Windows @($visibleWindow) -ProcessName 'msedge'
+            OtherProcess = -not (Test-HaySpaceApplicationWindowOpen -Windows @($visibleWindow) -ProcessName 'chrome')
+        }
+    } ([pscustomobject]@{ ProcessName = 'msedge'; Width = 1280; Height = 720 })
+    if (-not $windowDetection.BackgroundOnly -or -not $windowDetection.VisibleWindow -or -not $windowDetection.OtherProcess) {
+        throw 'Browser window detection did not distinguish visible windows from background processes.'
+    }
     $assignmentDisplays = @(
         [pscustomobject]@{ DisplayName = 'HaySpace test display ' + [guid]::NewGuid().ToString('N'); DeviceName = '\\.\DISPLAY_TEST'; X = 0; Y = 0; Width = 1280; Height = 720; Primary = $true }
     )

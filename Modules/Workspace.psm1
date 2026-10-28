@@ -301,6 +301,15 @@ function Get-HaySpaceWindowDisplay {
     return ($Displays | Where-Object Primary | Select-Object -First 1)
 }
 
+function Test-HaySpaceApplicationWindowOpen {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][array]$Windows, [Parameter(Mandatory)][string]$ProcessName)
+    return [bool](
+        $Windows |
+            Where-Object { $_.ProcessName -eq $ProcessName -and $_.Width -gt 0 -and $_.Height -gt 0 } |
+            Select-Object -First 1
+    )
+}
+
 function New-HaySpaceCapture {
     param(
         [Parameter(Mandatory)][string]$ProfileName,
@@ -424,6 +433,7 @@ function Restore-HaySpaceWorkspace {
     $profileRdpFiles = @(if ($Profile.PSObject.Properties['RdpFiles']) { $Profile.RdpFiles })
     $profileWindows = @(if ($Profile.PSObject.Properties['Windows']) { $Profile.Windows })
     $browserMode = if ($Profile.PSObject.Properties['BrowserMode']) { [string]$Profile.BrowserMode } else { 'Ignore' }
+    $browserNames = @('msedge', 'chrome', 'firefox')
     $launches = @()
     if ($LaunchApplications) {
         foreach ($folder in $profileExplorerFolders) {
@@ -454,14 +464,16 @@ function Restore-HaySpaceWorkspace {
         }
     }
     if ($LaunchApplications -and $profileType -ne 'Quick Layout') {
+        $currentWindows = @([HaySpace.NativeWindow]::GetWindows())
         foreach ($app in @($profileApplications | Sort-Object LaunchOrder)) {
             if ($app.PSObject.Properties['Launch'] -and -not $app.Launch) { continue }
             $processName = if ($app.PSObject.Properties['ProcessName']) { [string]$app.ProcessName } else { '' }
             $processPath = if ($app.PSObject.Properties['ProcessPath']) { [string]$app.ProcessPath } else { '' }
             $appUserModelId = if ($app.PSObject.Properties['AppUserModelId']) { [string]$app.AppUserModelId } else { '' }
-            $alreadyRunning = if ($processName) { Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($processName)) -ErrorAction SilentlyContinue | Select-Object -First 1 } else { $null }
+            $alreadyRunning = if ($processName) { Test-HaySpaceApplicationWindowOpen -Windows $currentWindows -ProcessName $processName } else { $false }
+            $launchAlreadyRequested = [bool]($launches | Where-Object ProcessName -eq $processName | Select-Object -First 1)
             $isSessionBrowser = $browserMode -eq 'Session' -and $processName -in @('msedge', 'chrome', 'firefox')
-            if ((-not $alreadyRunning -or $isSessionBrowser) -and $appUserModelId) {
+            if (-not $launchAlreadyRequested -and (-not $alreadyRunning -or $isSessionBrowser) -and $appUserModelId) {
                 try {
                     if ($appUserModelId -notmatch '^[^\\/:*?"<>|]+![^\\/:*?"<>|]+$') {
                         throw "Invalid installed-app identifier '$appUserModelId'."
@@ -474,12 +486,15 @@ function Restore-HaySpaceWorkspace {
                     Write-HaySpaceLog -Level Warning -Message "Could not launch installed app '$appUserModelId': $($_.Exception.Message)"
                 }
             }
-            elseif ((-not $alreadyRunning -or $isSessionBrowser) -and $processPath -and (Test-Path -LiteralPath $processPath)) {
+            elseif (-not $launchAlreadyRequested -and (-not $alreadyRunning -or $isSessionBrowser) -and $processPath -and (Test-Path -LiteralPath $processPath)) {
                 try {
                     $arguments = if ($app.PSObject.Properties['Arguments']) { [string]$app.Arguments } else { '' }
                     if ($browserMode -eq 'Session' -and $processName -in @('msedge', 'chrome', 'firefox')) {
                         $sessionArgument = if ($processName -eq 'firefox') { '-restore' } else { '--restore-last-session' }
                         if ($arguments) { $arguments += ' ' + $sessionArgument } else { $arguments = $sessionArgument }
+                    }
+                    if ($processName -in $browserNames -and -not $alreadyRunning -and $arguments -notmatch '(?i)(^|\s)--new-window(\s|$)') {
+                        if ($arguments) { $arguments += ' --new-window' } else { $arguments = '--new-window' }
                     }
                     if ([string]::IsNullOrWhiteSpace($arguments)) {
                         $process = Start-Process -FilePath $processPath -PassThru
@@ -503,8 +518,8 @@ function Restore-HaySpaceWorkspace {
     $profileUrls = @(if ($Profile.PSObject.Properties['Urls']) { $Profile.Urls })
     $shouldOpenUrls = $browserMode -eq 'URL'
     if ($browserMode -eq 'Hybrid') {
-        $browserProcesses = @(Get-Process -Name @('msedge', 'chrome', 'firefox') -ErrorAction SilentlyContinue)
-        $shouldOpenUrls = $browserProcesses.Count -eq 0
+        $browserWindows = @([HaySpace.NativeWindow]::GetWindows() | Where-Object { $_.ProcessName -in $browserNames -and $_.Width -gt 0 -and $_.Height -gt 0 })
+        $shouldOpenUrls = $browserWindows.Count -eq 0
     }
     if ($shouldOpenUrls) {
         foreach ($url in $profileUrls) {
