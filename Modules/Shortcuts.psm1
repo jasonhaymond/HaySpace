@@ -18,11 +18,18 @@ function New-HaySpaceShortcut {
 function Add-HaySpaceTaskbarShortcut {
     param([Parameter(Mandatory)][string]$ProfileName)
     $shortcutPath = New-HaySpaceShortcut -ProfileName $ProfileName
+    $startMenuFolder = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\HaySpace Profiles'
+    if (-not (Test-Path -LiteralPath $startMenuFolder)) {
+        $null = New-Item -ItemType Directory -Path $startMenuFolder -Force
+    }
+    $startMenuShortcutPath = Join-Path $startMenuFolder ([IO.Path]::GetFileName($shortcutPath))
+    Copy-Item -LiteralPath $shortcutPath -Destination $startMenuShortcutPath -Force
+
     $shell = New-Object -ComObject Shell.Application
-    $folder = $shell.Namespace((Split-Path -Parent $shortcutPath))
-    $item = $folder.ParseName((Split-Path -Leaf $shortcutPath))
+    $folder = $shell.Namespace($startMenuFolder)
+    $item = $folder.ParseName((Split-Path -Leaf $startMenuShortcutPath))
     if (-not $item) {
-        throw "Windows could not read the generated shortcut '$shortcutPath'."
+        throw "Windows could not read the Start menu shortcut '$startMenuShortcutPath'."
     }
 
     $pinVerb = @($item.Verbs()) |
@@ -31,11 +38,11 @@ function Add-HaySpaceTaskbarShortcut {
     if ($pinVerb) {
         $pinVerb.DoIt()
         Write-HaySpaceLog -Message "Pinned shortcut for '$ProfileName' to the taskbar."
-        return [pscustomobject]@{ Pinned = $true; ShortcutPath = $shortcutPath }
+        return [pscustomobject]@{ Pinned = $true; ShortcutPath = $shortcutPath; StartMenuShortcutPath = $startMenuShortcutPath }
     }
 
     Write-HaySpaceLog -Level Warning -Message "Windows does not expose a taskbar pin command for '$ProfileName'."
-    return [pscustomobject]@{ Pinned = $false; ShortcutPath = $shortcutPath }
+    return [pscustomobject]@{ Pinned = $false; ShortcutPath = $shortcutPath; StartMenuShortcutPath = $startMenuShortcutPath }
 }
 
 function Remove-HaySpaceShortcut {
@@ -44,6 +51,7 @@ function Remove-HaySpaceShortcut {
     $paths = Get-HaySpacePaths
     foreach ($path in @(
         (Join-Path $paths.Shortcuts $safeName),
+        (Join-Path (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\HaySpace Profiles') $safeName),
         (Join-Path (Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar') $safeName)
     )) {
         if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }

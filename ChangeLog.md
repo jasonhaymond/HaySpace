@@ -8,6 +8,6 @@
 - Added editable application launch entries, default browser-ignore behavior, profile refresh, and hidden GUI startup from the command launcher.
 - Added selective capture, window layout editing and visual design, Explorer/RDP restoration, profile hotkeys, display remapping, and migration assistance.
 - Added best-effort active browser URL capture and browser session-restore requests.
-- Added profile taskbar shortcut creation with a manual fallback when Windows does not expose taskbar pinning.
+- Added profile taskbar shortcut creation with a Start menu fallback when Windows does not expose taskbar pinning.
 - Added per-user logon startup, exact display-layout profile matching, and remembered profile selection for unmatched or ambiguous layouts.
 - Documented supported behavior and current implementation limits.

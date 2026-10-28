@@ -1226,14 +1226,14 @@ $window.FindName('TaskbarShortcutButton').Add_Click({
             Set-Status "Pinned '$($script:ProfileList.SelectedItem.ProfileName)' to the taskbar."
         }
         else {
-            Start-Process -FilePath 'explorer.exe' -ArgumentList "/select,`"$($result.ShortcutPath)`""
+            Start-Process -FilePath 'explorer.exe' -ArgumentList "`"$([IO.Path]::GetDirectoryName($result.StartMenuShortcutPath))`""
             [System.Windows.MessageBox]::Show(
-                "Windows does not offer a taskbar pin command on this version. A profile shortcut was created and selected in File Explorer. If available, right-click it and choose 'Pin to taskbar'.`n`n$($result.ShortcutPath)",
-                'Pin profile to taskbar',
+                "A HaySpace Profiles shortcut was added to the Start menu. Open Start > All apps > HaySpace Profiles, then right-click '$([IO.Path]::GetFileNameWithoutExtension($result.StartMenuShortcutPath))'. If Windows offers 'Pin to taskbar' under More, select it. Some Windows versions restrict taskbar pinning.`n`n$($result.StartMenuShortcutPath)",
+                'Finish pinning from Start',
                 'OK',
                 'Information'
             ) | Out-Null
-            Set-Status 'Profile shortcut created; finish pinning it from File Explorer if Windows allows.'
+            Set-Status 'Start menu shortcut created; use Start > All apps to pin it if Windows allows.'
         }
     }
     catch {
