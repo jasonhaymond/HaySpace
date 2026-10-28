@@ -1486,7 +1486,9 @@ $trayMenu.Add_Opening({
     $exitItem = $trayMenu.Items.Add('Exit')
     $exitItem.Add_Click({
         $script:ExitRequested = $true
+        Write-HaySpaceLog -Message 'HaySpace exit requested from the notification area.'
         $window.Close()
+        [Windows.Threading.Dispatcher]::CurrentDispatcher.BeginInvokeShutdown([Windows.Threading.DispatcherPriority]::Normal)
     })
 })
 $notifyIcon.ContextMenuStrip = $trayMenu
@@ -1496,6 +1498,7 @@ $window.Add_Closing({
     param($sender, $eventArgs)
     if (-not $script:ExitRequested) {
         $eventArgs.Cancel = $true
+        Write-HaySpaceLog -Message 'Dashboard close requested; minimizing HaySpace to the notification area.'
         Minimize-HaySpaceToTray
     }
     else {
@@ -1506,6 +1509,7 @@ $window.Add_Closing({
         $notifyIcon.Visible = $false
         $notifyIcon.Dispose()
         $trayMenu.Dispose()
+        Write-HaySpaceLog -Message 'HaySpace notification area resources released.'
     }
 })
 
@@ -1547,4 +1551,20 @@ if ($AutoLoadProfile) {
         Invoke-AutoProfileStartup
     })
 }
-$null = $window.ShowDialog()
+Write-HaySpaceLog -Message "HaySpace dashboard starting (tray startup: $([bool]$Tray); automatic profile loading: $([bool]$AutoLoadProfile))."
+$dispatcher = [Windows.Threading.Dispatcher]::CurrentDispatcher
+$dispatcher.Add_UnhandledException({
+    param($sender, $eventArgs)
+    Write-HaySpaceLog -Level Error -Message "Unhandled WPF dispatcher exception: $($eventArgs.Exception.ToString())"
+})
+try {
+    $window.Show()
+    [Windows.Threading.Dispatcher]::Run()
+}
+catch {
+    Write-HaySpaceLog -Level Error -Message "HaySpace dispatcher failed: $($_.Exception.ToString())"
+    throw
+}
+finally {
+    Write-HaySpaceLog -Message 'HaySpace dispatcher stopped.'
+}

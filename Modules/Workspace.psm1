@@ -26,11 +26,32 @@ namespace HaySpace {
         private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
         [StructLayout(LayoutKind.Sequential)]
         private struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT { public int X; public int Y; }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WINDOWPLACEMENT {
+            public uint Length;
+            public uint Flags;
+            public uint ShowCmd;
+            public POINT MinPosition;
+            public POINT MaxPosition;
+            public RECT NormalPosition;
+        }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MONITORINFO {
+            public uint Size;
+            public RECT Monitor;
+            public RECT Work;
+            public uint Flags;
+        }
         [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
         [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
         [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
         [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out int processId);
         [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+        [DllImport("user32.dll")] private static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT placement);
+        [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
+        [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
         [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
         [DllImport("user32.dll")] private static extern bool IsZoomed(IntPtr hWnd);
         [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int command);
@@ -52,7 +73,31 @@ namespace HaySpace {
                 try {
                     var process = Process.GetProcessById(pid);
                     RECT rect;
-                    if (!GetWindowRect(hWnd, out rect)) return true;
+                    bool minimized = IsIconic(hWnd);
+                    if (minimized) {
+                        WINDOWPLACEMENT placement = new WINDOWPLACEMENT();
+                        placement.Length = (uint)Marshal.SizeOf(typeof(WINDOWPLACEMENT));
+                        if (GetWindowPlacement(hWnd, ref placement)) {
+                            rect = placement.NormalPosition;
+                            IntPtr monitor = MonitorFromWindow(hWnd, 2);
+                            if (monitor != IntPtr.Zero) {
+                                MONITORINFO info = new MONITORINFO();
+                                info.Size = (uint)Marshal.SizeOf(typeof(MONITORINFO));
+                                if (GetMonitorInfo(monitor, ref info)) {
+                                    int offsetX = info.Monitor.Left - info.Work.Left;
+                                    int offsetY = info.Monitor.Top - info.Work.Top;
+                                    rect.Left += offsetX;
+                                    rect.Right += offsetX;
+                                    rect.Top += offsetY;
+                                    rect.Bottom += offsetY;
+                                }
+                            }
+                        } else if (!GetWindowRect(hWnd, out rect)) {
+                            return true;
+                        }
+                    } else if (!GetWindowRect(hWnd, out rect)) {
+                        return true;
+                    }
                     result.Add(new WindowInfo {
                         Handle = hWnd,
                         Title = text.ToString(),
@@ -64,7 +109,7 @@ namespace HaySpace {
                         Width = Math.Max(0, rect.Right - rect.Left),
                         Height = Math.Max(0, rect.Bottom - rect.Top),
                         Maximized = IsZoomed(hWnd),
-                        Minimized = IsIconic(hWnd)
+                        Minimized = minimized
                     });
                 } catch { }
                 return true;
