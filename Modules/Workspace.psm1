@@ -310,6 +310,29 @@ function Test-HaySpaceApplicationWindowOpen {
     )
 }
 
+function Start-HaySpaceApplication {
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [string]$Arguments = '',
+        [string]$WorkingDirectory
+    )
+    $resolvedPath = [IO.Path]::GetFullPath($FilePath)
+    if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf)) {
+        throw "Application executable is unavailable: '$resolvedPath'."
+    }
+    if (-not $WorkingDirectory) {
+        $WorkingDirectory = [IO.Path]::GetDirectoryName($resolvedPath)
+    }
+    $shell = New-Object -ComObject Shell.Application
+    try {
+        $shell.ShellExecute($resolvedPath, $Arguments, $WorkingDirectory, 'open', 1)
+    }
+    finally {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)
+    }
+    return [pscustomobject]@{ ProcessName = [IO.Path]::GetFileNameWithoutExtension($resolvedPath); StartedAt = Get-Date }
+}
+
 function New-HaySpaceCapture {
     param(
         [Parameter(Mandatory)][string]$ProfileName,
@@ -497,12 +520,13 @@ function Restore-HaySpaceWorkspace {
                         if ($arguments) { $arguments += ' --new-window' } else { $arguments = '--new-window' }
                     }
                     if ([string]::IsNullOrWhiteSpace($arguments)) {
-                        $process = Start-Process -FilePath $processPath -PassThru
+                        $process = Start-HaySpaceApplication -FilePath $processPath
                     }
                     else {
-                        $process = Start-Process -FilePath $processPath -ArgumentList $arguments -PassThru
+                        $process = Start-HaySpaceApplication -FilePath $processPath -Arguments $arguments
                     }
-                    $launches += [pscustomobject]@{ ProcessName = $processName; ProcessId = $process.Id; StartedAt = Get-Date }
+                    $process.ProcessName = $processName
+                    $launches += $process
                     Start-Sleep -Milliseconds 250
                 }
                 catch {
