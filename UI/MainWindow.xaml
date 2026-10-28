@@ -59,6 +59,7 @@
                                 </WrapPanel>
                                 <WrapPanel>
                                     <Button x:Name="ShortcutButton" Content="Create desktop shortcut"/>
+                                    <Button x:Name="TaskbarShortcutButton" Content="Add to taskbar"/>
                                     <Button x:Name="ExportProfileButton" Content="Export profile"/>
                                     <Button x:Name="ImportProfileButton" Content="Import profile"/>
                                     <Button x:Name="BackupButton" Content="Backup"/>

@@ -17,7 +17,7 @@ No installer or external service is required. The launcher uses the current user
 - Restore matching windows and optionally start missing applications when their original executable path is still available.
 - Remap to connected displays using saved friendly display names, with a primary-display fallback.
 - Use a visual drag/resize layout designer, selective capture filters, configurable Ctrl+Alt hotkeys, and a migration assistant for display/application path remapping.
-- Rename connected displays; create profile shortcuts; create and restore local ZIP backups.
+- Rename connected displays; create desktop or taskbar profile shortcuts; create and restore local ZIP backups.
 - Minimize the dashboard to the notification area; use its menu to load saved profiles.
 - Run portably with local-only data and rotating local logs.
 

@@ -1089,6 +1089,28 @@ $window.FindName('ShortcutButton').Add_Click({
         }
     }
 })
+$window.FindName('TaskbarShortcutButton').Add_Click({
+    if (-not $script:ProfileList.SelectedItem) { return }
+    try {
+        $result = Add-HaySpaceTaskbarShortcut -ProfileName $script:ProfileList.SelectedItem.ProfileName
+        if ($result.Pinned) {
+            Set-Status "Pinned '$($script:ProfileList.SelectedItem.ProfileName)' to the taskbar."
+        }
+        else {
+            Start-Process -FilePath 'explorer.exe' -ArgumentList "/select,`"$($result.ShortcutPath)`""
+            [System.Windows.MessageBox]::Show(
+                "Windows does not offer a taskbar pin command on this version. A profile shortcut was created and selected in File Explorer. If available, right-click it and choose 'Pin to taskbar'.`n`n$($result.ShortcutPath)",
+                'Pin profile to taskbar',
+                'OK',
+                'Information'
+            ) | Out-Null
+            Set-Status 'Profile shortcut created; finish pinning it from File Explorer if Windows allows.'
+        }
+    }
+    catch {
+        [System.Windows.MessageBox]::Show($_.Exception.Message, 'Unable to add taskbar shortcut', 'OK', 'Error') | Out-Null
+    }
+})
 $window.FindName('ExportProfileButton').Add_Click({
     $profile = $script:ProfileList.SelectedItem
     if (-not $profile) { return }
