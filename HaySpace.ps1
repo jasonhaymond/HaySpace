@@ -15,6 +15,10 @@ foreach ($module in @('Storage.psm1', 'Workspace.psm1', 'Shortcuts.psm1', 'Start
 $script:HaySpaceDpiContext = [HaySpace.NativeWindow]::EnterPhysicalCoordinates()
 $paths = Initialize-HaySpaceStorage
 
+if (Test-HaySpaceRunAtLogon) {
+    Set-HaySpaceRunAtLogon -Enabled $true -ScriptPath $script:HaySpaceScriptPath
+}
+
 if ($LoadProfile) {
     $profilePath = Get-HaySpaceProfilePath -ProfileName $LoadProfile
     if (-not (Test-Path -LiteralPath $profilePath)) {

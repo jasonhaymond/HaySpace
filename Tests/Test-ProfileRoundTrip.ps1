@@ -96,8 +96,12 @@ try {
         throw 'The selected default profile was not saved for the display configuration.'
     }
     $startupCommand = Get-HaySpaceStartupCommand -ScriptPath (Join-Path $root 'HaySpace.ps1')
-    if ($startupCommand -notmatch '-AutoLoadProfile -Tray' -or $startupCommand -notmatch [regex]::Escape((Join-Path $root 'HaySpace.ps1'))) {
-        throw 'The user-logon command did not include display-based startup or the HaySpace script path.'
+    $startupLauncher = Get-Content -LiteralPath (Join-Path $root 'Start-HaySpace.vbs') -Raw
+    if ($startupCommand -notmatch [regex]::Escape((Join-Path $root 'Start-HaySpace.vbs')) -or
+        $startupCommand -notmatch 'wscript\.exe.*//B //NoLogo' -or
+        $startupLauncher -notmatch 'shell\.Run command, 0, False' -or
+        $startupLauncher -notmatch '-AutoLoadProfile -Tray') {
+        throw 'The user-logon command did not launch HaySpace invisibly through its VBScript launcher.'
     }
     $trayRestartCommand = Get-HaySpaceRestartCommand -ScriptPath (Join-Path $root 'HaySpace.ps1') -Tray
     $guiRestartCommand = Get-HaySpaceRestartCommand -ScriptPath (Join-Path $root 'HaySpace.ps1')

@@ -4,9 +4,13 @@ function Get-HaySpaceStartupRegistryPath {
 
 function Get-HaySpaceStartupCommand {
     param([Parameter(Mandatory)][string]$ScriptPath)
-    $powerShellPath = Join-Path $PSHOME 'powershell.exe'
     $resolvedScriptPath = [IO.Path]::GetFullPath($ScriptPath)
-    return '"{0}" -NoLogo -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -STA -File "{1}" -AutoLoadProfile -Tray' -f $powerShellPath, $resolvedScriptPath
+    $launcherPath = Join-Path (Split-Path -Parent $resolvedScriptPath) 'Start-HaySpace.vbs'
+    if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
+        throw "HaySpace logon launcher was not found: '$launcherPath'."
+    }
+    $windowScriptPath = Join-Path $env:WINDIR 'System32\wscript.exe'
+    return '"{0}" //B //NoLogo "{1}"' -f $windowScriptPath, $launcherPath
 }
 
 function Get-HaySpaceRestartCommand {
