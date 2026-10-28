@@ -1133,6 +1133,36 @@ $script:RunAtLogonCheckBox.Add_Click({
         [System.Windows.MessageBox]::Show($_.Exception.Message, 'Unable to update logon startup', 'OK', 'Error') | Out-Null
     }
 })
+$window.FindName('AppDesktopShortcutButton').Add_Click({
+    try {
+        $shortcut = New-HaySpaceDesktopShortcut
+        Set-Status "HaySpace desktop shortcut created: $shortcut"
+    }
+    catch {
+        [System.Windows.MessageBox]::Show($_.Exception.Message, 'Unable to create HaySpace desktop shortcut', 'OK', 'Error') | Out-Null
+    }
+})
+$window.FindName('AppTaskbarShortcutButton').Add_Click({
+    try {
+        $result = Add-HaySpaceApplicationTaskbarShortcut
+        if ($result.Pinned) {
+            Set-Status 'HaySpace was pinned to the taskbar.'
+        }
+        else {
+            Start-Process -FilePath 'explorer.exe' -ArgumentList "`"$([IO.Path]::GetDirectoryName($result.StartMenuShortcutPath))`""
+            [System.Windows.MessageBox]::Show(
+                "A HaySpace shortcut that opens Start-HaySpace.cmd was added under Start > All apps > HaySpace. Open Start, search for HaySpace, then right-click it and choose Pin to taskbar if Windows offers that option.`n`n$($result.StartMenuShortcutPath)",
+                'Finish pinning HaySpace',
+                'OK',
+                'Information'
+            ) | Out-Null
+            Set-Status 'HaySpace Start menu shortcut created; pin it from Start if Windows allows.'
+        }
+    }
+    catch {
+        [System.Windows.MessageBox]::Show($_.Exception.Message, 'Unable to add HaySpace to taskbar', 'OK', 'Error') | Out-Null
+    }
+})
 
 $window.FindName('RefreshProfilesButton').Add_Click({
     try {

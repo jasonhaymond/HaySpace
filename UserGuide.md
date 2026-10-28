@@ -28,6 +28,8 @@ The tray menu provides shortcuts to load profiles while the dashboard is hidden.
 
 In **Settings**, enable **Run at user logon and load a workspace for connected displays**. HaySpace starts minimized to the notification area when you sign in. It identifies the connected layout using display names, count, resolution, primary-display status, and relative arrangement. If exactly one saved profile matches, HaySpace loads it automatically. If there is no exact match or several profiles match, choose a profile in the startup chooser; HaySpace remembers that selection for this display layout and uses it on future logons. Cancel to leave the workspace unchanged. Turn the setting off to remove HaySpace from this user's logon startup.
 
+Use **Create HaySpace desktop shortcut** or **Add HaySpace to taskbar** to launch the general HaySpace dashboard instead of a specific profile. If Windows does not expose native taskbar pinning, the shortcut is added under **Start > All apps > HaySpace**; search for HaySpace there and pin it if Windows offers that option.
+
 ## Manage displays
 
 Open the **Displays** tab and select **Refresh** to enumerate currently connected screens. Select a screen and choose **Rename selected** or **Test selected**. Names are saved locally and used to match displays when restoring. Use **Migration assistant** on a profile to map its saved displays to this computer and update unavailable application or Explorer folder paths.

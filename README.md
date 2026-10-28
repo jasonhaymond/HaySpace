@@ -20,6 +20,7 @@ No installer or external service is required. The launcher uses the current user
 - Rename connected displays; create desktop or taskbar profile shortcuts; create and restore local ZIP backups.
 - Minimize the dashboard to the notification area; use its menu to load saved profiles.
 - Start at user logon, automatically matching saved workspaces to connected display layouts and remembering profile choices per layout.
+- Create desktop and taskbar shortcuts for the HaySpace launcher as well as profile-specific shortcuts.
 - Run portably with local-only data and rotating local logs.
 
 Profiles, settings, logs, backups, shortcuts, and connection files are local runtime data and are excluded from Git by `.gitignore`.

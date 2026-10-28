@@ -10,4 +10,5 @@
 - Added best-effort active browser URL capture and browser session-restore requests.
 - Added profile taskbar shortcut creation with a Start menu fallback when Windows does not expose taskbar pinning.
 - Added per-user logon startup, exact display-layout profile matching, and remembered profile selection for unmatched or ambiguous layouts.
+- Added desktop and taskbar shortcuts for launching the general HaySpace application.
 - Documented supported behavior and current implementation limits.

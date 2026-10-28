@@ -15,18 +15,39 @@ function New-HaySpaceShortcut {
     return $shortcutPath
 }
 
-function Add-HaySpaceTaskbarShortcut {
-    param([Parameter(Mandatory)][string]$ProfileName)
-    $shortcutPath = New-HaySpaceShortcut -ProfileName $ProfileName
-    $startMenuFolder = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\HaySpace Profiles'
-    if (-not (Test-Path -LiteralPath $startMenuFolder)) {
-        $null = New-Item -ItemType Directory -Path $startMenuFolder -Force
+function New-HaySpaceApplicationShortcut {
+    param([Parameter(Mandatory)][string]$DestinationDirectory)
+    $paths = Get-HaySpacePaths
+    $launcher = Join-Path $paths.Root 'Start-HaySpace.cmd'
+    if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+        throw "HaySpace launcher was not found: '$launcher'."
     }
-    $startMenuShortcutPath = Join-Path $startMenuFolder ([IO.Path]::GetFileName($shortcutPath))
-    Copy-Item -LiteralPath $shortcutPath -Destination $startMenuShortcutPath -Force
+    if (-not (Test-Path -LiteralPath $DestinationDirectory)) {
+        $null = New-Item -ItemType Directory -Path $DestinationDirectory -Force
+    }
+    $shortcutPath = Join-Path $DestinationDirectory 'HaySpace.lnk'
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $launcher
+    $shortcut.WorkingDirectory = $paths.Root
+    $shortcut.Description = 'Start HaySpace'
+    $shortcut.Save()
+    Write-HaySpaceLog -Message "Created HaySpace application shortcut '$shortcutPath'."
+    return $shortcutPath
+}
 
+function New-HaySpaceStartMenuProfileShortcut {
+    param(
+        [Parameter(Mandatory)][string]$ShortcutPath,
+        [Parameter(Mandatory)][string]$StartMenuFolder
+    )
+    if (-not (Test-Path -LiteralPath $StartMenuFolder)) {
+        $null = New-Item -ItemType Directory -Path $StartMenuFolder -Force
+    }
+    $startMenuShortcutPath = Join-Path $StartMenuFolder ([IO.Path]::GetFileName($ShortcutPath))
+    Copy-Item -LiteralPath $ShortcutPath -Destination $startMenuShortcutPath -Force
     $shell = New-Object -ComObject Shell.Application
-    $folder = $shell.Namespace($startMenuFolder)
+    $folder = $shell.Namespace($StartMenuFolder)
     $item = $folder.ParseName((Split-Path -Leaf $startMenuShortcutPath))
     if (-not $item) {
         throw "Windows could not read the Start menu shortcut '$startMenuShortcutPath'."
@@ -37,12 +58,46 @@ function Add-HaySpaceTaskbarShortcut {
         Select-Object -First 1
     if ($pinVerb) {
         $pinVerb.DoIt()
-        Write-HaySpaceLog -Message "Pinned shortcut for '$ProfileName' to the taskbar."
-        return [pscustomobject]@{ Pinned = $true; ShortcutPath = $shortcutPath; StartMenuShortcutPath = $startMenuShortcutPath }
+        return [pscustomobject]@{ Pinned = $true; StartMenuShortcutPath = $startMenuShortcutPath }
     }
+    return [pscustomobject]@{ Pinned = $false; StartMenuShortcutPath = $startMenuShortcutPath }
+}
 
-    Write-HaySpaceLog -Level Warning -Message "Windows does not expose a taskbar pin command for '$ProfileName'."
-    return [pscustomobject]@{ Pinned = $false; ShortcutPath = $shortcutPath; StartMenuShortcutPath = $startMenuShortcutPath }
+function New-HaySpaceDesktopShortcut {
+    $desktop = [Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)
+    return New-HaySpaceApplicationShortcut -DestinationDirectory $desktop
+}
+
+function Add-HaySpaceApplicationTaskbarShortcut {
+    $paths = Get-HaySpacePaths
+    $shortcutPath = New-HaySpaceApplicationShortcut -DestinationDirectory $paths.Shortcuts
+    $startMenuFolder = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\HaySpace'
+    $pinResult = New-HaySpaceStartMenuProfileShortcut -ShortcutPath $shortcutPath -StartMenuFolder $startMenuFolder
+    if ($pinResult.Pinned) {
+        Write-HaySpaceLog -Message 'Pinned HaySpace application shortcut to the taskbar.'
+    }
+    else {
+        Write-HaySpaceLog -Level Warning -Message 'Windows does not expose a taskbar pin command for the HaySpace application shortcut.'
+    }
+    return [pscustomobject]@{
+        Pinned = $pinResult.Pinned
+        ShortcutPath = $shortcutPath
+        StartMenuShortcutPath = $pinResult.StartMenuShortcutPath
+    }
+}
+
+function Add-HaySpaceTaskbarShortcut {
+    param([Parameter(Mandatory)][string]$ProfileName)
+    $shortcutPath = New-HaySpaceShortcut -ProfileName $ProfileName
+    $startMenuFolder = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\HaySpace Profiles'
+    $pinResult = New-HaySpaceStartMenuProfileShortcut -ShortcutPath $shortcutPath -StartMenuFolder $startMenuFolder
+    if ($pinResult.Pinned) {
+        Write-HaySpaceLog -Message "Pinned shortcut for '$ProfileName' to the taskbar."
+    }
+    else {
+        Write-HaySpaceLog -Level Warning -Message "Windows does not expose a taskbar pin command for '$ProfileName'."
+    }
+    return [pscustomobject]@{ Pinned = $pinResult.Pinned; ShortcutPath = $shortcutPath; StartMenuShortcutPath = $pinResult.StartMenuShortcutPath }
 }
 
 function Remove-HaySpaceShortcut {
@@ -58,4 +113,4 @@ function Remove-HaySpaceShortcut {
     }
 }
 
-Export-ModuleMember -Function New-HaySpaceShortcut, Add-HaySpaceTaskbarShortcut, Remove-HaySpaceShortcut
+Export-ModuleMember -Function New-HaySpaceShortcut, New-HaySpaceApplicationShortcut, New-HaySpaceStartMenuProfileShortcut, New-HaySpaceDesktopShortcut, Add-HaySpaceApplicationTaskbarShortcut, Add-HaySpaceTaskbarShortcut, Remove-HaySpaceShortcut
