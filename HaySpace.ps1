@@ -63,9 +63,19 @@ $script:DisplayList = $window.FindName('DisplayList')
 $script:SettingsRoot = $window.FindName('SettingsRoot')
 $script:RunAtLogonCheckBox = $window.FindName('RunAtLogonCheckBox')
 $script:ExitRequested = $false
+$script:RestartRequested = $false
 $script:HotkeyIds = @{}
 $script:HotkeySource = $null
 $script:HotkeyHook = $null
+
+function Request-HaySpaceRestart {
+    if ($script:RestartRequested) { return }
+    $script:RestartRequested = $true
+    $script:ExitRequested = $true
+    Write-HaySpaceLog -Message 'HaySpace restart requested.'
+    $window.Close()
+    [Windows.Threading.Dispatcher]::CurrentDispatcher.BeginInvokeShutdown([Windows.Threading.DispatcherPriority]::Normal)
+}
 
 function Set-Status([string]$Text) {
     $script:StatusText.Text = $Text
@@ -1628,6 +1638,7 @@ $window.FindName('RenameDisplayButton').Add_Click({
 $window.FindName('OpenDataFolderButton').Add_Click({
     Start-Process explorer.exe -ArgumentList "`"$($paths.Root)`""
 })
+$window.FindName('RestartButton').Add_Click({ Request-HaySpaceRestart })
 
 $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
 $notifyIcon.Icon = [System.Drawing.SystemIcons]::Application
@@ -1656,6 +1667,9 @@ $trayMenu.Add_Opening({
             }
         })
     }
+    $trayMenu.Items.Add('-') | Out-Null
+    $restartItem = $trayMenu.Items.Add('Restart HaySpace')
+    $restartItem.Add_Click({ Request-HaySpaceRestart })
     $trayMenu.Items.Add('-') | Out-Null
     $exitItem = $trayMenu.Items.Add('Exit')
     $exitItem.Add_Click({
@@ -1747,4 +1761,14 @@ finally {
     $script:HaySpaceInstanceMutex.ReleaseMutex()
     $script:HaySpaceInstanceMutex.Dispose()
     [HaySpace.NativeWindow]::RestoreDpiAwarenessContext($script:HaySpaceDpiContext)
+    if ($script:RestartRequested) {
+        $restartCommand = Get-HaySpaceRestartCommand -ScriptPath $script:HaySpaceScriptPath -Tray:$Tray
+        $powerShellPath = Join-Path $PSHOME 'powershell.exe'
+        $commandPrefix = '"{0}" ' -f $powerShellPath
+        if (-not $restartCommand.StartsWith($commandPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'The HaySpace restart command did not contain the expected PowerShell executable.'
+        }
+        $restartArguments = $restartCommand.Substring($commandPrefix.Length)
+        Start-Process -FilePath $powerShellPath -ArgumentList $restartArguments -WorkingDirectory $root -WindowStyle Hidden
+    }
 }

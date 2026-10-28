@@ -2,7 +2,7 @@
 
 ## Start the application
 
-Run `Start-HaySpace.cmd`. The dashboard opens and a HaySpace icon appears in the notification area. Closing the dashboard hides it; choose **Exit** from the tray menu to end the application.
+Run `Start-HaySpace.cmd`. The dashboard opens and a HaySpace icon appears in the notification area. Closing the dashboard hides it; choose **Restart HaySpace** from the tray menu or the Settings tab to restart the app. Choose **Exit** from the tray menu to end the application.
 
 ## Capture a workspace
 

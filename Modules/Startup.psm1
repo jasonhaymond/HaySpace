@@ -9,6 +9,15 @@ function Get-HaySpaceStartupCommand {
     return '"{0}" -NoLogo -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -STA -File "{1}" -AutoLoadProfile -Tray' -f $powerShellPath, $resolvedScriptPath
 }
 
+function Get-HaySpaceRestartCommand {
+    param([Parameter(Mandatory)][string]$ScriptPath, [switch]$Tray)
+    $powerShellPath = Join-Path $PSHOME 'powershell.exe'
+    $resolvedScriptPath = [IO.Path]::GetFullPath($ScriptPath)
+    $command = '"{0}" -NoLogo -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -STA -File "{1}"' -f $powerShellPath, $resolvedScriptPath
+    if ($Tray) { $command += ' -Tray' }
+    return $command
+}
+
 function Set-HaySpaceDisplayProfileAssignment {
     param(
         [Parameter(Mandatory)][object[]]$Displays,
@@ -47,4 +56,4 @@ function Set-HaySpaceRunAtLogon {
     }
 }
 
-Export-ModuleMember -Function Test-HaySpaceRunAtLogon, Set-HaySpaceRunAtLogon, Get-HaySpaceStartupCommand, Set-HaySpaceDisplayProfileAssignment
+Export-ModuleMember -Function Test-HaySpaceRunAtLogon, Set-HaySpaceRunAtLogon, Get-HaySpaceStartupCommand, Get-HaySpaceRestartCommand, Set-HaySpaceDisplayProfileAssignment

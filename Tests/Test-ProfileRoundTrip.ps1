@@ -69,6 +69,13 @@ try {
     if ($startupCommand -notmatch '-AutoLoadProfile -Tray' -or $startupCommand -notmatch [regex]::Escape((Join-Path $root 'HaySpace.ps1'))) {
         throw 'The user-logon command did not include display-based startup or the HaySpace script path.'
     }
+    $trayRestartCommand = Get-HaySpaceRestartCommand -ScriptPath (Join-Path $root 'HaySpace.ps1') -Tray
+    $guiRestartCommand = Get-HaySpaceRestartCommand -ScriptPath (Join-Path $root 'HaySpace.ps1')
+    if ($trayRestartCommand -notmatch '-Tray' -or $trayRestartCommand -match '-AutoLoadProfile' -or
+        $guiRestartCommand -match '-Tray|-AutoLoadProfile' -or
+        $trayRestartCommand -notmatch [regex]::Escape((Join-Path $root 'HaySpace.ps1'))) {
+        throw 'Restart commands did not preserve the tray mode without repeating automatic profile loading.'
+    }
     Save-HaySpaceProfile -Profile $profile | Out-Null
     $loaded = Get-HaySpaceProfiles | Where-Object ProfileName -eq $name | Select-Object -First 1
     if (-not $loaded -or $loaded.ProfileType -ne 'Workspace Layout' -or @($loaded.Applications).Count -ne 1 -or $loaded.Applications[0].Arguments -ne '' -or -not $loaded.Applications[0].Launch -or $loaded.Applications[0].AppUserModelId -ne 'MSTeams_8weky3d8bbwe!MSTeams') {
