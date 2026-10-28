@@ -1345,7 +1345,7 @@ $window.FindName('ExportProfileButton').Add_Click({
     if (-not $profile) { return }
     $dialog = New-Object Microsoft.Win32.SaveFileDialog
     $dialog.Filter = 'HaySpace profile (*.json)|*.json'
-    $dialog.FileName = $profile.ProfileName + '.json'
+    $dialog.FileName = '{0}_{1}.json' -f $profile.ProfileName, (Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')
     if ($dialog.ShowDialog()) {
         try {
             $profile | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $dialog.FileName -Encoding UTF8
@@ -1381,7 +1381,7 @@ $window.FindName('ImportProfileButton').Add_Click({
 $window.FindName('BackupButton').Add_Click({
     $dialog = New-Object Microsoft.Win32.SaveFileDialog
     $dialog.Filter = 'ZIP backup (*.zip)|*.zip'
-    $dialog.FileName = 'HaySpaceBackup.zip'
+    $dialog.FileName = 'HaySpaceBackup_{0}.zip' -f (Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')
     if ($dialog.ShowDialog()) {
         try {
             Export-HaySpaceBackup -DestinationPath $dialog.FileName
