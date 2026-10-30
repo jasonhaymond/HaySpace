@@ -464,7 +464,6 @@ function New-HaySpaceCapture {
         RdpFiles = @()
         Hotkey = ''
         Displays = @($displays)
-        LaunchDelaySeconds = 2
     }
 }
 
@@ -516,6 +515,14 @@ function Resolve-HaySpaceApplicationUserModelId {
 function Test-HaySpaceApplicationProcessRunning {
     param([Parameter(Mandatory)][string]$ProcessName)
     return [bool](Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Select-Object -First 1)
+}
+
+function Test-HaySpaceWindowTargetPending {
+    param(
+        [Parameter(Mandatory)][string]$TargetKey,
+        [Parameter(Mandatory)][hashtable]$PlacedTargets
+    )
+    return -not $PlacedTargets.ContainsKey($TargetKey)
 }
 
 function Restore-HaySpaceWorkspace {
@@ -649,13 +656,6 @@ function Restore-HaySpaceWorkspace {
     }
     $startupTimeoutSeconds = if ($trackedTargets.Count -gt 0) { 45 } else { 0 }
     $deadline = (Get-Date).AddSeconds($startupTimeoutSeconds)
-    $settleSeconds = if ($Profile.PSObject.Properties['LaunchDelaySeconds']) {
-        [math]::Max(0, [math]::Min(10, [int]$Profile.LaunchDelaySeconds))
-    }
-    else {
-        2
-    }
-    $settledSince = $null
     $settings = Get-HaySpaceSettings
     do {
         $currentWindows = [HaySpace.NativeWindow]::GetWindows()
@@ -679,6 +679,7 @@ function Restore-HaySpaceWorkspace {
             }
             if (-not $candidate) { continue }
             $usedHandles[$candidate.Handle.ToInt64().ToString()] = $true
+            if (-not (Test-HaySpaceWindowTargetPending -TargetKey $targetKey -PlacedTargets $placedTargets)) { continue }
 
             $mappedDeviceName = $null
             if ($settings.DisplayMappings -and $target.DisplayName -and $settings.DisplayMappings.ContainsKey([string]$target.DisplayName)) {
@@ -736,22 +737,15 @@ function Restore-HaySpaceWorkspace {
         }
         $pendingLaunchedTargets = @(
             $trackedTargets.Keys |
-                Where-Object { -not $placedTargets.ContainsKey($_) }
+                Where-Object { Test-HaySpaceWindowTargetPending -TargetKey $_ -PlacedTargets $placedTargets }
         )
-        if ($pendingLaunchedTargets.Count -eq 0) {
-            if ($trackedTargets.Count -eq 0 -or $settleSeconds -eq 0) { break }
-            if (-not $settledSince) { $settledSince = Get-Date }
-            if (((Get-Date) - $settledSince).TotalSeconds -ge $settleSeconds) { break }
-        }
-        else {
-            $settledSince = $null
-        }
+        if ($pendingLaunchedTargets.Count -eq 0) { break }
         if ($pendingLaunchedTargets.Count -gt 0 -and (Get-Date) -ge $deadline) { break }
         Start-Sleep -Milliseconds 500
     } while ((Get-Date) -lt $deadline)
     $pendingLaunchedTargets = @(
         $trackedTargets.Keys |
-            Where-Object { -not $placedTargets.ContainsKey($_) }
+            Where-Object { Test-HaySpaceWindowTargetPending -TargetKey $_ -PlacedTargets $placedTargets }
     )
     if ($pendingLaunchedTargets.Count -gt 0) {
         $unmatchedTitles = @(

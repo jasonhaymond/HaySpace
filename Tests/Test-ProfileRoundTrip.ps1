@@ -68,6 +68,22 @@ try {
         $teamsDetection.AppUserModelId -ne 'MSTeams_8wekyb3d8bbwe!MSTeams') {
         throw 'Teams tray-process detection or installed-app identity resolution failed.'
     }
+    $targetTracking = & (Get-Module Workspace) {
+        $placedTargets = @{}
+        $pendingBeforePlacement = Test-HaySpaceWindowTargetPending -TargetKey '0' -PlacedTargets $placedTargets
+        $placedTargets['0'] = $true
+        $simulatedWindowState = 'Minimized'
+        [pscustomobject]@{
+            PendingBeforePlacement = $pendingBeforePlacement
+            PendingAfterMinimizingArrangedWindow = Test-HaySpaceWindowTargetPending -TargetKey '0' -PlacedTargets $placedTargets
+            PendingUnopenedTarget = Test-HaySpaceWindowTargetPending -TargetKey '1' -PlacedTargets $placedTargets
+            SimulatedWindowState = $simulatedWindowState
+        }
+    }
+    if (-not $targetTracking.PendingBeforePlacement -or $targetTracking.PendingAfterMinimizingArrangedWindow -or
+        -not $targetTracking.PendingUnopenedTarget -or $targetTracking.SimulatedWindowState -ne 'Minimized') {
+        throw 'Arranged windows were not removed from restore tracking after placement.'
+    }
 
     $unlaunchedWindowProfile = [pscustomobject]@{
         ProfileName = 'Unlaunched window timing regression'

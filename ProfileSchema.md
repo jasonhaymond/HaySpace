@@ -17,7 +17,7 @@ Profiles are UTF-8 JSON files stored in `Profiles` and currently use schema vers
 | `RdpFiles` | array of strings | Optional `.rdp` files to open with Remote Desktop Connection during restore. |
 | `Hotkey` | string | Optional profile activation chord in `Ctrl+Alt+key` form. |
 | `Displays` | array | Captured display device, friendly name, bounds, and work area. |
-| `LaunchDelaySeconds` | number | Reserved launch timing metadata. |
+| `LaunchDelaySeconds` | number | Legacy timing field retained for compatibility; its value is ignored. Restore waits up to 45 seconds only for windows belonging to applications it launched that have not yet been arranged. |
 
 Window state values are `Normal`, `Maximized`, and `Minimized`. Relative coordinates are normalized to the display work area and allow layouts to adapt to a different resolution. On display mismatch, HaySpace first uses a saved migration mapping, then the friendly name, then the saved Windows device name, then the primary display.
 

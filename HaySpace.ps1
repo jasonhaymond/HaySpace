@@ -963,7 +963,6 @@ function Show-ProfileEditor {
             RdpFiles = @()
             Hotkey = ''
             Displays = @(Get-HaySpaceDisplays)
-            LaunchDelaySeconds = 2
         }
     }
     foreach ($property in @(
@@ -973,7 +972,6 @@ function Show-ProfileEditor {
         @{ Name = 'RdpFiles'; Value = @() },
         @{ Name = 'Hotkey'; Value = '' },
         @{ Name = 'Displays'; Value = @(Get-HaySpaceDisplays) },
-        @{ Name = 'LaunchDelaySeconds'; Value = 2 },
         @{ Name = 'BrowserMode'; Value = 'Ignore' },
         @{ Name = 'ProfileType'; Value = 'Full Workspace' }
     )) {
